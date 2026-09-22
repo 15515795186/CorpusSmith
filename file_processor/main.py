@@ -99,6 +99,8 @@ def parse_args():
                         help="最小文本长度 (default: 30)")
     parser.add_argument("--max-text-length", type=int, default=None,
                         help="最大文本长度，超长整篇丢弃 (default: 1000000)")
+    parser.add_argument("--dedup-threshold", type=float, default=None,
+                        help="SimHash 文档判重相似度阈值 (default: 0.90)")
     parser.add_argument("--chunk-size", type=int, default=None,
                         help="预训练分块大小 (default: 1024)，0=不分块")
     parser.add_argument("--chunk-overlap", type=int, default=None,
@@ -190,6 +192,8 @@ def build_config(args) -> ProcessorConfig:
         config.min_text_length = args.min_text_length
     if args.max_text_length is not None:
         config.max_text_length = args.max_text_length
+    if args.dedup_threshold is not None:
+        config.dedup_threshold = args.dedup_threshold
     if args.chunk_size is not None:
         config.chunk_size = args.chunk_size
     if args.chunk_overlap is not None:

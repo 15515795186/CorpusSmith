@@ -433,6 +433,7 @@ class FileProcessorPipeline:
             logger.info("[Output] [%s] resume: 已有 %d 个来源，跳过", name, len(existing_sources))
 
         total_samples = 0
+        total_generated = 0
         written_sources = 0
 
         pbar = tqdm(total=len(results), desc=f"[Output] {name}", unit="file",
@@ -446,14 +447,20 @@ class FileProcessorPipeline:
                     continue
                 samples = converter.convert(result)
                 if samples:
-                    self.formatter.write_batch(name, samples)
-                    total_samples += len(samples)
-                    written_sources += 1
+                    written = self.formatter.write_batch(name, samples)
+                    total_generated += len(samples)
+                    total_samples += written
+                    if written:
+                        written_sources += 1
             except Exception as e:
                 logger.error("转换失败 [%s] %s: %s",
                              name, os.path.basename(result.filepath), e)
             pbar.update(1)
         pbar.close()
+
+        if total_generated != total_samples:
+            logger.info("[Output] [%s] 跳过与数据集中已有记录完全相同的样本 %d 条",
+                        name, total_generated - total_samples)
 
         if name == "pretrain":
             self.stats.pretrain_samples = total_samples
@@ -515,6 +522,7 @@ class FileProcessorPipeline:
             "texts_cleaned": self.stats.texts_cleaned,
             "texts_filtered": self.stats.texts_filtered,
             "rejection_reasons": dict(self.rejections.most_common()),
+            "exact_duplicate_samples_skipped": self.formatter.duplicates_skipped,
             "language_dist": dict(self.stats.language_dist.most_common()),
             "total_tokens_est": self.stats.total_tokens_est,
             "datasets": {

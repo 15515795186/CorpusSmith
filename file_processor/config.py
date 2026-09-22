@@ -39,7 +39,9 @@ class ProcessorConfig:
     # 默认基本等于"不按长度丢弃整篇文档"：长文档由分块(chunk_size)处理，
     # 旧默认 32768 会把 60KB+ 的正常论文整篇淘汰（实测确有发生）
     max_text_length: int = 1_000_000
-    dedup_threshold: float = 0.85
+    # 去重只清"近乎复制"的文档（相似度≥0.90 且长度比≥0.6，真实语料标定：
+    # 不同论文/不同高校简介页全部保留，白皮书再版与模板重复被识别）
+    dedup_threshold: float = 0.90
     garbage_ratio_threshold: float = 0.3  # 乱码字符比例上限
     max_repeat_char_ratio: float = 0.3    # 单字符占比上限（防退化输出）
 

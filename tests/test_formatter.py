@@ -78,6 +78,33 @@ class JSONLFormatterTest(unittest.TestCase):
         formatter.write_batch("pretrain", [self._record("a.txt")])
         self.assertEqual(formatter.count_lines("pretrain"), 1)
 
+    def test_write_batch_skips_exact_duplicates(self):
+        """同一数据集内完全相同的记录只写一次（跨来源重复样本回归）"""
+        formatter = JSONLFormatter(self.out)
+        formatter.prepare("instruction")
+        rec = self._record("a.txt")
+        written = formatter.write_batch(
+            "instruction", [rec, dict(rec), self._record("b.txt")])
+        self.assertEqual(written, 2)
+        self.assertEqual(formatter.count_lines("instruction"), 2)
+        self.assertEqual(formatter.duplicates_skipped, 1)
+
+    def test_resume_loads_existing_record_fingerprints(self):
+        """续跑时历史输出中的相同记录也不会被再次写入"""
+        formatter = JSONLFormatter(self.out, overwrite=False)
+        formatter.prepare("pretrain")
+        formatter.write_batch("pretrain", [
+            self._record("a.txt", "x"), self._record("b.txt", "y")])
+
+        resumed = JSONLFormatter(self.out, overwrite=False)
+        resumed.prepare("pretrain")
+        written = resumed.write_batch("pretrain", [
+            self._record("a.txt", "x"),   # 与历史记录完全相同 → 跳过
+            self._record("c.txt", "z"),   # 新记录 → 写入
+        ])
+        self.assertEqual(written, 1)
+        self.assertEqual(resumed.count_lines("pretrain"), 3)
+
 
 if __name__ == "__main__":
     unittest.main()

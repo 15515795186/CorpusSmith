@@ -2,6 +2,7 @@ import unittest
 
 from file_processor.cleaners.text_cleaner import TextCleaner
 from file_processor.cleaners.quality_filter import QualityFilter
+from file_processor.utils.dedup import Deduplicator, SimHash
 from file_processor.utils.lang_detect import detect_language
 
 CHINESE_TEXT = (
@@ -136,6 +137,64 @@ class LangDetectTest(unittest.TestCase):
 
     def test_empty_is_unknown(self):
         self.assertEqual(detect_language("   "), "unknown")
+
+
+class SimHashTest(unittest.TestCase):
+    """去重指纹回归测试
+
+    历史缺陷1：_hash 用 Python 内置 hash()，其随机盐（PYTHONHASHSEED）导致
+    同一语料在不同进程判重结果不同（实测 12 篇 vs 8 篇，交集仅 4 篇）。
+    历史缺陷2：token 用单字/单词，同领域文档词表高度重叠，
+    真实语料误杀 18/50（白皮书）与 12/50（arXiv 论文）。改用 bigram
+    （中文相邻字 + 英文相邻词）后，5 类语料实测仅真实再版/模板件被识别。
+    历史缺陷3：只看指纹相似度会把同模板不同填充的文档（不同高校简介页，
+    长度差异大）误判重复，故增加长度比约束。
+    """
+
+    GOLDEN_FP = 12472177444965147942  # CHINESE_TEXT 的稳定指纹（blake2b+zh-bigram）
+
+    IRRIGATION = (
+        "本文系统研究了干旱区灌溉制度的演变过程，并通过多年试验数据对比了节水灌溉"
+        "在不同土壤类型上的产量响应，结果表明滴灌处理显著提高了水分利用效率。")
+    ANNUAL_REPORT = (
+        "公司年度报告显示本年度营业收入增长百分之十二，净利润达到三点五亿元，"
+        "海外业务扩张速度加快，管理层计划在未来三年追加研发投入占比。")
+
+    def test_fingerprint_is_stable_across_processes(self):
+        """内置 hash() 会让此值随 PYTHONHASHSEED 变化 → 该断言即防回归"""
+        self.assertEqual(SimHash().fingerprint(CHINESE_TEXT), self.GOLDEN_FP)
+
+    def test_unrelated_docs_not_duplicate(self):
+        dedup = Deduplicator()
+        self.assertFalse(dedup.is_duplicate(self.IRRIGATION * 3))
+        self.assertFalse(dedup.is_duplicate(self.ANNUAL_REPORT * 3),
+                         "同领域不相关文档不应被误判为重复")
+
+    def test_small_edit_detected_as_duplicate(self):
+        dedup = Deduplicator()
+        self.assertFalse(dedup.is_duplicate(self.IRRIGATION * 3))
+        edited = self.IRRIGATION.replace("产量响应", "亩产响应", 1) * 3
+        self.assertTrue(dedup.is_duplicate(edited), "轻微改动的再版文档应被识别")
+
+    def test_length_ratio_guard(self):
+        """同开头但长度差 > 阈值的文档不判重复（同模板不同填充）"""
+        dedup = Deduplicator()
+        short_doc = self.IRRIGATION * 3
+        long_doc = self.IRRIGATION * 12  # 长度比 0.25 < min_length_ratio
+        self.assertFalse(dedup.is_duplicate(short_doc))
+        self.assertFalse(dedup.is_duplicate(long_doc))
+
+    def test_token_floor(self):
+        """几乎无中英文内容的文本（如纯数字表）指纹无意义，不参与判重"""
+        dedup = Deduplicator()
+        digits_a = "1234 5678 9012 " * 10
+        digits_b = "1234 5678 9012 " * 10
+        self.assertFalse(dedup.is_duplicate(digits_a))
+        self.assertFalse(dedup.is_duplicate(digits_b))
+
+    def test_short_text_below_floor_not_deduped(self):
+        dedup = Deduplicator()
+        self.assertFalse(dedup.is_duplicate("短文本"))
 
 
 if __name__ == "__main__":

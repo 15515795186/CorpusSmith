@@ -14,7 +14,7 @@
 | 结果可复现 | 文件按路径排序处理；每次运行重建输出，不再出现跨次运行记录堆叠 |
 | 可诊断 | 被丢弃文本写入 `rejected.jsonl` 并统计原因，便于定位阈值/OCR 质量问题 |
 | 确定性产出 | 每次运行生成 `run_report.json`（文件数、缓存命中、丢弃原因、数据集规模、脱敏配置） |
-| 无外部依赖测试 | 53 个单元 + 端到端测试（标准库 unittest），不需要 API key |
+| 无外部依赖测试 | 74 个单元 + 端到端测试（标准库 unittest），不需要 API key |
 
 ---
 
@@ -50,6 +50,7 @@ LLM_Data_Test/
 ├── tests/                           # 单元与端到端测试
 ├── _archive/                        # 已废弃的本地 OCR 方案（见其 README）
 ├── check_progress.py                # 进度查看：输入量 / 产出 / 缓存 / 报告 / 日志
+├── verify_datasets.py               # 产出自检：重复记录 / 字段缺失 / 编码 / 分块一致性
 ├── run_quality_score.py             # 对已有数据集重新评分（不破坏原文件）
 ├── requirements.txt
 └── README.md
@@ -108,6 +109,24 @@ python check_progress.py
         ▼                          ▼                          ▼
   预训练（分块 + 元数据）      指令微调（模板 / LLM）        COT（推理链提取）
 ```
+
+---
+
+## 实测规模（250 文件批，未启用 LLM 质检）
+
+| 指标 | 数值 |
+|------|------|
+| 读取 + 清洗 + 转换总耗时 | 首次 ~28s；缓存命中后 ~11s（8 并发） |
+| 输入 | `run_config.json` 的 5 类目录各 50 个文件 |
+| 文档级判重丢弃 | 2（真实模板重复件），其余 248 全部进入产出 |
+| pretrain | 8468 条 / 248 来源 / 12.3 MB |
+| instruction | 1492 条 / 182 来源（写入时剔除完全重复样本 37 条） |
+| cot | 715 条 / 232 来源 |
+| 语言分布 | zh 147 / en 86 / mixed 14 / unknown 1 |
+| Token 估计 | ~3.9 M |
+
+产出完整性可用 `python verify_datasets.py` 自检（记录数/metadata 一致性、
+精确重复、字段缺失、U+FFFD、分块索引、丢弃原因直方图）。
 
 ---
 
@@ -187,6 +206,8 @@ datasets/
 | `--output-dir/-o` | 输出目录（默认 `datasets`） |
 | `--output-types` | `pretrain,instruction,cot` 的子集 |
 | `--chunk-size/--chunk-overlap` | 预训练分块（`0` = 不分块） |
+| `--min-text-length` | 最小文本长度（默认 30） |
+| `--dedup-threshold` | SimHash 文档判重阈值（默认 0.90，越高越保守） |
 | `--max-samples` | 每类数据集样本上限（0 = 不限） |
 | `--resume` | 保留已有输出，跳过已处理来源（配合读取缓存实现真正的续跑） |
 | `--no-cache` / `--clear-cache` | 禁用 / 清空读取缓存 |
@@ -205,8 +226,10 @@ datasets/
 python -m unittest discover -s tests -v
 ```
 
-覆盖：配置解析与 key 脱敏、输出布局与重建/续跑语义、读取缓存失效、中文标点保护、
-编号步骤/列表换行保留、质量过滤误判回归、三种格式转换、pipeline 端到端（含重跑不重复、resume 命中缓存）。
+覆盖：配置解析与 key 脱敏、输出布局与重建/续跑语义、样本级精确去重、读取缓存失效、
+中文标点保护、编号步骤/列表换行保留、质量过滤误判回归、去重指纹稳定性（金样例）与
+bigram/长度比标定语义、各读取器（文字/扫描 PDF 分流、OCR 临时目录清理、GBK 编码、
+HTML 类型判定、读取器分发）、三种格式转换、pipeline 端到端（含重跑不重复、resume 命中缓存）。
 测试不需要 API key，也不写工作区之外的文件。
 
 ---
@@ -216,6 +239,11 @@ python -m unittest discover -s tests -v
 - **中文标点保护**：Unicode 标准化使用 NFC 而非 NFKC（NFKC 会把 `，` 折叠成 `,`），全角→半角只在英文文本上执行。
 - **长文档不整篇丢弃**：`max_text_length` 默认 1000000，60KB+ 的论文交由分块处理，不再因长度被淘汰。
 - **乱码判定用比例**：不再使用"单字符出现 >100 次即乱码"（中文高频字会被误杀），改用连续重复 + 单字符占比。
+- **去重标定（实测 250 文件）**：
+  - 指纹必须用稳定内容哈希（blake2b 64 位）。旧实现用内置 `hash()`，其进程随机盐导致同一语料两次运行分别判重 12 篇/8 篇（交集仅 4 篇），结果完全不可复现。
+  - token 用 **bigram**（中文相邻字 + 英文相邻词）。旧实现中文单字/英文单词在同领域语料上误杀严重：白皮书 18/50、arXiv 论文 12/50。
+  - 只清"近乎复制"：相似度 ≥ 0.90 且长度比 ≥ 0.6。同模板不同填充的文档（不同高校简介页 0.906/0.891、白皮书不同主题系列 0.78-0.83）全部保留；真正的模板重复件（两份申报书 0.938）被识别。
+  - 样本级兜底：`JSONLFormatter` 在写入时跳过与同一数据集已有记录**完全相同**的记录（本次实测拦下 37 条跨来源重复指令样本），`run_report.json` 中计为 `exact_duplicate_samples_skipped`。
 - **输出重建**：每次运行默认清空目标 `data.jsonl`；需要追加/续跑时使用 `--resume`。
 - **读取缓存位置**：`.cache/read_cache.jsonl`（键为绝对路径 + mtime + size，文件变化自动失效；只缓存成功结果）。
 - **临时目录**：扫描 PDF 渲染页写入 `ocr_temp/`（`ocr_work_dir` 可配），运行后自动清理。
@@ -246,6 +274,9 @@ python -m unittest discover -s tests -v
 | 质量评分串行、慢 | 改为并发（`max_workers`），新增 `api_errors` 统计与失败来源清单 |
 | 被丢弃文本不可追溯 | 新增 `rejected.jsonl` + `run_report.json`（配置自动脱敏） |
 | 死代码：本地 OCR 方案、测试图、无关输出 | 归档到 `_archive/` 并附说明；`hf_download_model.py` 按 huggingface_hub ≥1.0 修正 |
-| 无依赖清单 / 无 .gitignore / 无测试 | 新增 `requirements.txt`、`.gitignore`、53 个测试；仓库完成首次提交 |
+| 无依赖清单 / 无 .gitignore / 无测试 | 新增 `requirements.txt`、`.gitignore`、74 个测试；仓库完成首次提交 |
 | 脚本输出乱码 | 后台脚本统一 UTF-8 输出 |
 | `chunk_overlap > chunk_size` 直接崩溃 | 自动收敛 overlap，`--chunk-size 100` 也能正常跑 |
+| SimHash 用 `hash()` 随机盐，判重结果跨进程漂移 | 改 blake2b 稳定 64 位哈希 + 金样例回归测试 |
+| 去重误杀：中文单字/英文单词 token 在同领域语料上区分度不足（实测最高 18/50、12/50） | 改中英 bigram + 阈值 0.90 + 长度比≥0.6 约束，实测 250 文件仅 2 个真实模板重复被清 |
+| 同一数据集内出现完全相同的样本记录（实测 37 条） | `JSONLFormatter` 写入时按规范化指纹去重（含 resume 历史指纹），`run_report.json` 统计跳过条数 |

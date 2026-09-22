@@ -44,7 +44,7 @@ class QualityFilter:
                  max_length: int = 1_000_000,
                  garbage_ratio: float = 0.3,
                  target_languages: Optional[List[str]] = None,
-                 dedup_threshold: float = 0.85,
+                 dedup_threshold: float = 0.90,
                  keep_unknown_language: bool = True,
                  max_repeat_char_ratio: float = 0.3):
         self.min_length = min_length

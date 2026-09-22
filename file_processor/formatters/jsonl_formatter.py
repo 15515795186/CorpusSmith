@@ -19,6 +19,7 @@ JSONL 格式写入器
 "追加写" 导致多次运行结果叠加、出现大量重复样本。
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -35,6 +36,9 @@ class JSONLFormatter:
         self.prefix = prefix
         self.overwrite = overwrite
         self._prepared: Set[str] = set()
+        # 跨批次/跨运行的样本级精确去重（同一数据集内完全相同的记录只写一次）
+        self._seen: Dict[str, Set[str]] = {}
+        self.duplicates_skipped = 0
         os.makedirs(output_dir, exist_ok=True)
 
     # ---------- 路径 ----------
@@ -61,6 +65,19 @@ class JSONLFormatter:
         if self.overwrite and os.path.exists(path):
             os.remove(path)
             logger.info("[Output] 已清空旧文件: %s", path)
+        self._seen[name] = set()
+        if not self.overwrite and os.path.exists(path):
+            # 续跑模式：载入已有记录的规范化指纹，保证新记录不与历史样本重复
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    self._seen[name].add(self._record_key(rec))
         self._prepared.add(name)
 
     def prepare_all(self, names: Iterable[str]):
@@ -68,18 +85,33 @@ class JSONLFormatter:
             self.prepare(name)
 
     # ---------- 写入 ----------
-    def write_batch(self, name: str, records: List[Dict[str, Any]]):
+    @staticmethod
+    def _record_key(record: Dict[str, Any]) -> str:
+        raw = json.dumps(record, ensure_ascii=False, sort_keys=True)
+        return hashlib.blake2b(raw.encode("utf-8"), digest_size=16).hexdigest()
+
+    def write_batch(self, name: str, records: List[Dict[str, Any]]) -> int:
+        """写入一批记录，跳过数据集中已存在的完全相同记录；返回实际写入条数"""
         if not records:
-            return
+            return 0
         if name not in self._prepared:
             self.prepare(name)
         os.makedirs(self.dataset_dir(name), exist_ok=True)
+        seen = self._seen.setdefault(name, set())
+        written = 0
         with open(self._filename(name), "a", encoding="utf-8") as f:
             for record in records:
+                key = self._record_key(record)
+                if key in seen:
+                    self.duplicates_skipped += 1
+                    continue
+                seen.add(key)
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                written += 1
+        return written
 
-    def write(self, name: str, record: Dict[str, Any]):
-        self.write_batch(name, [record])
+    def write(self, name: str, record: Dict[str, Any]) -> int:
+        return self.write_batch(name, [record])
 
     # ---------- 读取 / 查询 ----------
     def count_lines(self, name: str) -> int:
