@@ -231,7 +231,9 @@ def build_config(args) -> ProcessorConfig:
     if args.max_workers is not None:
         config.max_workers = max(1, args.max_workers)
 
-    # ---- API key 从环境变量补齐 ----
+    # ---- API key：先加载项目根 .env（可选，真实环境变量优先），再从环境变量补齐 ----
+    from .dotenv import load_dotenv
+    load_dotenv()
     if not config.openai_api_key:
         config.openai_api_key = os.getenv("OPENAI_API_KEY", "")
     if not config.dashscope_api_key:

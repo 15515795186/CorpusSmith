@@ -64,9 +64,14 @@ LLM_Data_Test/
 # 1. 安装依赖
 pip install -r requirements.txt
 
-# 2. 配置 API key（不要写进代码）
+# 2. 配置 API key（三选一，不要写进代码）
+#    a. 推荐：项目根放 .env（已被 gitignore），运行时自动加载
+#       PowerShell: Copy-Item .env.example .env  然后填入 key
+#    b. 临时：当前窗口设置，进程退出即消失
 export DASHSCOPE_API_KEY="sk-xxx"          # Linux/macOS
-setx DASHSCOPE_API_KEY "sk-xxx"            # Windows（新开终端生效）
+$env:DASHSCOPE_API_KEY="sk-xxx"            # Windows PowerShell
+#    c. 不推荐：写入用户环境变量（明文长期存注册表，所有子进程可见）
+setx DASHSCOPE_API_KEY "sk-xxx"            # 优先级：真实环境变量 > .env 文件
 
 # 3. 先看配置与待处理文件（不写任何文件）
 python -m file_processor.main --dry-run
