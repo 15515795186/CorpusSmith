@@ -28,6 +28,8 @@ class COTConverter:
             return []
 
         text = result.text.strip()
+        # 剥离扫描/转换残留的 markdown 加粗标记（保留内容，去除 ** 对）
+        text = re.sub(r'\*\*([^*\n]+?)\*\*', r'\1', text)
         samples = []
 
         # 1. 从结构化内容提取COT（步骤、流程、因果）
@@ -54,57 +56,121 @@ class COTConverter:
         source = os.path.basename(result.filepath)
         language = detect_language(text)
 
-        # 匹配编号步骤： 1. xxx \n 2. xxx \n 3. xxx
+        # 匹配编号步骤。注意：仅靠"数字+分隔符"不够——arXiv 论文的章节编号
+        # （1. Introduction / 2. Related Work）会被当成"40 步流程"。
+        # 守卫：步数 2~12、描述中位长 ≥10 字（真实步骤是句子，章节名是短语）。
         step_patterns = [
-            re.findall(r'(?:^|\n)\s*(\d+)[.、．\s]\s*(.+?)(?=\n\s*\d+[.、．]|\n\n|\Z)', text, re.DOTALL),
-            re.findall(r'(?:^|\n)\s*([第一步-第十步]+)[：:]?\s*(.+?)(?=\n\s*[第一步-第十步]+|\n\n|\Z)', text, re.DOTALL),
-            re.findall(r'(?:^|\n)\s*([阶段步骤环节][一二三四五六七八九十]+)[：:]?\s*(.+?)(?=\n\s*[阶段步骤环节][一二三四五六七八九十]+|\n\n|\Z)', text, re.DOTALL),
+            re.findall(r'(?:^|\n)\s*(\d+)[.、．]\s*(.+?)(?=\n\s*\d+[.、．]|\n\n|\Z)', text, re.DOTALL),
+            re.findall(r'(?:^|\n)\s*(第[一二三四五六七八九十]+步)[：:]?\s*(.+?)(?=\n\s*第[一二三四五六七八九十]+步|\n\n|\Z)', text, re.DOTALL),
+            re.findall(r'(?:^|\n)\s*((?:阶段|步骤|环节)[一二三四五六七八九十]+)[：:]?\s*(.+?)(?=\n\s*(?:阶段|步骤|环节)[一二三四五六七八九十]+|\n\n|\Z)', text, re.DOTALL),
         ]
 
-        for steps in step_patterns:
-            if len(steps) >= 2:
-                step_texts = [f"{num}. {desc.strip()}" for num, desc in steps]
+        # 两种样本形态，语义不同：
+        # ① 流程逐步说明——仅当有强时序证据（步骤文本自身含顺序词，或紧邻
+        #    引导句含流程词）；对"1. 公司甲 2. 公司乙"式清单硬说"完整流程"
+        #    就是语义错配，宁缺毋滥。
+        # ② 条目清点——任何通过守卫的编号块都成立（数数不预设时序）。
+        step_order_hint = re.compile(r'首先|然后|接着|随后|此后|最后|第一步|第二步|第三步')
+        window_hint = re.compile(r'流程|过程如下|步骤如下|程序如下|操作步骤|办理程序|按下列程序')
+        for cand in step_patterns:
+            steps = COTConverter._real_process_steps(cand)
+            if steps:
+                # 步骤文本装进材料预算：计数答案必须与 input 里可见的条目一致，
+                # 超预算的条目连同其计数一并舍弃（答案超出材料=教幻觉）
+                kept, used = [], 0
+                for num, desc in steps:
+                    line = f"{num}. {re.sub(r'\s+', ' ', desc.strip())}"
+                    if used + len(line) + 1 > 1500:
+                        break
+                    kept.append(line)
+                    used += len(line) + 1
+                if len(kept) < 2:
+                    continue
                 instruction_text = self._find_step_context(text, steps[0][0])
                 if len(instruction_text) > 50:
                     instruction_text = instruction_text[:50] + "..."
 
-                # 生成 "步骤是什么" 类指令
-                cot_steps = "\n".join(step_texts)
-                conclusion = step_texts[-1] if step_texts else "完成"
+                cot_steps = "\n".join(kept)
+                material = cot_steps
+                conclusion = kept[-1]
+                topic = f"「{instruction_text}」" if instruction_text else ""
 
-                samples.append({
-                    "instruction": f"请逐步说明{instruction_text}的完整过程。",
-                    "input": "",
-                    "chain_of_thought": cot_steps,
-                    "output": conclusion.split(". ", 1)[-1] if ". " in conclusion else conclusion,
-                    "source": source,
-                })
-
-                # 如果步骤多，生成"总共几步"类指令
-                if len(steps) >= 3:
+                first_pos = text.find((steps[0][1] or "")[:15])
+                window = text[max(0, first_pos - 80):first_pos] if first_pos >= 0 else ""
+                is_procedure = (sum(bool(step_order_hint.search(d)) for _, d in steps) >= 2
+                                or bool(window_hint.search(window)))
+                if is_procedure:
                     samples.append({
-                        "instruction": f"实现{instruction_text}需要哪些步骤？请分步说明。",
-                        "input": "",
-                        "chain_of_thought": f"总共需要{len(steps)}个步骤：\n" + cot_steps,
-                        "output": f"实现{instruction_text}需要{len(steps)}个步骤。",
+                        "instruction": f"根据以下材料，逐步说明{topic}完整过程。" if topic else
+                                       "根据以下材料，逐步说明其中描述的完整流程。",
+                        "input": material,
+                        "chain_of_thought": cot_steps,
+                        "output": conclusion.split(". ", 1)[-1] if ". " in conclusion else conclusion,
                         "source": source,
                     })
+
+                samples.append({
+                    "instruction": f"根据以下材料，清点{topic}总共列出了几个条目？请逐条核对。" if topic else
+                                   "根据以下材料，清点其中总共列出了几个条目？请逐条核对。",
+                    "input": material,
+                    "chain_of_thought": f"逐条清点材料：\n{cot_steps}\n"
+                                        f"核对编号后共{len(kept)}个条目。",
+                    "output": f"{topic}共列出{len(kept)}个条目。" if topic else
+                              f"材料共列出{len(kept)}个条目。",
+                    "source": source,
+                })
 
                 if len(samples) >= 10:
                     return samples
 
         return samples
 
+    _SECTION_WORDS = re.compile(
+        r'^(introduction|related\s+work|background|method(s|ology)?|approach|'
+        r'experiments?|results?|evaluation|discussion|conclusions?|references?|'
+        r'acknowledg(e)?ments?|abstract)\.?$', re.IGNORECASE)
+
+    @staticmethod
+    def _real_process_steps(steps):
+        """校验并规整编号块，返回真实条目/流程步骤序列或 None。
+
+        - 纯数字组按 +1 严格递增切段取最长段：合并编号（1,2,3,1,2,3…）
+          和扫描版章节碎片（3./3./1./2.）都是目录噪声，不是同一个序列；
+        - 步数 2~12、描述中位长度 ≥10 字：短词占多数的是章节名；
+        - 英文论文节名（Introduction/Method…）过半即拒。"""
+        if not steps:
+            return None
+        if all(re.fullmatch(r'\d+', n) for n, _ in steps):
+            runs, cur = [], [steps[0]]
+            for prev, nxt in zip(steps, steps[1:]):
+                if int(nxt[0]) == int(prev[0]) + 1:
+                    cur.append(nxt)
+                else:
+                    runs.append(cur)
+                    cur = [nxt]
+            runs.append(cur)
+            steps = max(runs, key=len)
+        if not (2 <= len(steps) <= 12):
+            return None
+        descs = [d.strip() for _, d in steps]
+        lens = sorted(len(d) for d in descs)
+        if lens[len(lens) // 2] < 10:
+            return None
+        titled = sum(1 for d in descs if COTConverter._SECTION_WORDS.match(d))
+        if titled >= max(2, len(descs) // 2):
+            return None
+        return steps
+
     def _find_step_context(self, text: str, first_step: str) -> str:
-        """查找步骤的上下文标题"""
+        """查找步骤的上下文标题；找不到返回空串（由调用方改用无指代措辞）"""
         idx = text.find(first_step)
         if idx < 0:
-            return "该任务"
+            return ""
         before = text[:idx]
         headings = re.findall(r'^#{1,3}\s+(.+)$', before, re.MULTILINE)
         if headings:
             return headings[-1].strip()
-        return "该任务"
+        return ""
 
     def _extract_definition_cot(self, text: str, result: ReaderResult) -> List[Dict]:
         """从定义/分类内容提取COT"""
@@ -122,6 +188,7 @@ class COTConverter:
             for m in re.finditer(pattern, text):
                 groups = m.groups()
                 if len(groups) == 2:
+                    # 因果/条件类：已知条件已写进题面 → 题目自包含，input 空合规
                     premise, conclusion = groups
                     samples.append({
                         "instruction": f"根据已知信息，分析{premise}会得出什么结论？请给出推理过程。",
@@ -133,10 +200,11 @@ class COTConverter:
                         "source": source,
                     })
                 elif len(groups) == 3:
+                    # 旧题面"请逐步分析完整过程"没有对象；现在原句进 input，题面自包含
                     first, second, third = groups
                     samples.append({
-                        "instruction": f"请逐步分析完整过程。",
-                        "input": "",
+                        "instruction": "根据以下材料，按顺序逐步分析其完整过程。",
+                        "input": m.group(0)[:600].strip(),
                         "chain_of_thought": f"第一步骤：{first.strip()}\n"
                                               f"第二步骤：{second.strip()}\n"
                                               f"第三步骤：{third.strip()}",

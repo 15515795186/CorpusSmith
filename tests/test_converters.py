@@ -82,5 +82,128 @@ class COTConverterTest(unittest.TestCase):
         self.assertEqual(len(converter.convert(make_result())), 1)
 
 
+class InstructionGroundingTest(unittest.TestCase):
+    """input 字段语义契约：答案来自特定文档的样本必须开卷（材料在 input），
+    否则是在教模型闭卷背诵/幻觉；自包含通识题允许 input 为空"""
+
+    def test_heading_sample_is_grounded(self):
+        samples = InstructionConverter().convert(make_result())
+        reading = [s for s in samples if "材料" in s["instruction"]]
+        self.assertTrue(reading, "标题段落应生成开卷阅读样本")
+        for s in reading:
+            self.assertTrue(s["input"].strip(), "阅读样本的 input 必须携带来源材料")
+            self.assertIn("数据处理的流程", s["instruction"])
+
+    def test_definition_sample_is_self_contained(self):
+        samples = InstructionConverter().convert(make_result())
+        defs = [s for s in samples if s["instruction"].startswith("什么是")]
+        self.assertTrue(defs, "定义句应产出自包含通识样本")
+        for s in defs:
+            self.assertEqual(s["input"], "", "自包含通识样本 input 应为空")
+
+    def test_key_points_numbered_and_capped(self):
+        content = "\n\n".join(
+            f"第{i}段的主旨句会被抽取为一条要点，后面还有大量补充论述内容。"
+            for i in range(8))
+        pts = InstructionConverter()._key_points(content)
+        lines = pts.split("\n")
+        self.assertLessEqual(len(lines), 5)
+        self.assertTrue(all(l.startswith(f"{j + 1}. ") for j, l in enumerate(lines)),
+                        "要点应编号且顺序正确")
+
+    def test_definition_gate_truncates_and_strips(self):
+        doc = ("（六）地震动参数区划图，是指以地震动参数为指标，"
+               "将全国划分为不同抗震设防要求区域的图件。第十八条 本条例自公布之日起施行。\n\n"
+               + "补充段落内容若干字，用于把文档撑到列表与标题路径都不触发的状态。" * 3)
+        samples = InstructionConverter()._generate_from_templates(doc, make_result(doc))
+        defs = [s for s in samples if s["instruction"].startswith("什么是")]
+        self.assertEqual(len(defs), 1)
+        self.assertEqual(defs[0]["instruction"], "什么是地震动参数区划图？")
+        self.assertTrue(defs[0]["output"].endswith("图件。"))
+        self.assertNotIn("第十八条", defs[0]["output"], "答案不得吞进下一条编号")
+        self.assertEqual(defs[0]["input"], "")
+
+    def test_definition_gate_rejects_verb_slices(self):
+        doc = ("五、二十一世纪初的农村扶贫开发缓解和消除贫困仍然是指"
+               "中国今后一项长期的历史任务。为加快解决贫困问题而召开中央扶贫会议。\n\n"
+               "信息公开有两种方式：一是指每年新生入学时发放手册并开展宣讲活动。\n\n"
+               + "其余段落与上述结构无关，仅用于维持文档整体长度与主题连续性说明。" * 3)
+        samples = InstructionConverter()._generate_from_templates(doc, make_result(doc))
+        defs = [s for s in samples if s["instruction"].startswith("什么是")]
+        self.assertEqual(defs, [], "动词误接（仍然是指）与超长编号术语应被门控拦截")
+
+
+class COTGroundingTest(unittest.TestCase):
+
+    STEP_DOC = (
+        "项目实施流程\n\n"
+        "1. 需求调研并输出需求分析报告\n"
+        "2. 方案设计并组织专家评审\n"
+        "3. 编码实现并完成自测验证\n\n"
+        "首先，项目组完成需求调研，其次，进入方案设计与评审，最后，完成编码实现与验收。\n"
+    )
+
+    def test_step_samples_are_grounded(self):
+        samples = COTConverter().convert(make_result(self.STEP_DOC))
+        steps = [s for s in samples if "根据以下材料" in s["instruction"]]
+        self.assertTrue(steps, "步骤类样本应改为开卷形态")
+        for s in steps:
+            self.assertTrue(s["input"].strip())
+            self.assertNotIn("该任务", s["instruction"], "无标题时不得硬造空指代")
+
+    SECTION_DOC = (
+        "论文结构\n\n"
+        "1. Introduction\n\n"
+        "2. Related Work\n\n"
+        "3. Method\n\n"
+        "4. Experiments\n\n"
+        "5. Conclusion\n"
+    )
+
+    def test_section_numbering_is_not_a_process(self):
+        samples = COTConverter().convert(make_result(self.SECTION_DOC))
+        bogus = [s for s in samples if "步骤" in s["instruction"]]
+        self.assertEqual(bogus, [], "论文章节编号不得被当作流程步骤生成样本")
+
+    def test_causal_sample_input_stays_empty(self):
+        samples = COTConverter().convert(make_result(CHINESE_DOC))
+        causal = [s for s in samples if s["instruction"].startswith("根据已知信息")]
+        self.assertTrue(causal)
+        for s in causal:
+            self.assertEqual(s["input"], "", "条件已在题面，自包含合规")
+
+    def test_three_step_sample_grounded(self):
+        samples = COTConverter().convert(make_result(self.STEP_DOC))
+        three = [s for s in samples if "第一步骤" in s["chain_of_thought"]]
+        self.assertTrue(three)
+        for s in three:
+            self.assertIn("首先", s["input"], "题面不得依赖看不见的原文")
+
+
+class NumberedListSampleTest(unittest.TestCase):
+    """白皮书式编号条目（并行措施）的正确落点：instruction 列举任务，而非 COT 流程"""
+
+    WHITEPAPER = (
+        "中国对非援助政策宣示\n\n"
+        "一、扩大对非援助规模，到2009年使中国对非洲国家的援助规模比2006年增加一倍。\n"
+        "二、三年内面向非洲国家提供三百亿美元的优惠贷款和二十亿美元的优惠出口买方信贷。\n"
+        "三、为鼓励和支持中国企业到非洲投资，设立中非发展基金，基金总额逐步达到五十亿美元。\n"
+    )
+
+    def test_numbered_block_becomes_enumeration_sample(self):
+        doc = self.WHITEPAPER
+        samples = InstructionConverter()._generate_from_templates(doc, make_result(doc))
+        enum = [s for s in samples if "逐条列举并编号" in s["instruction"]]
+        self.assertTrue(enum)
+        self.assertIn("中非发展基金", enum[0]["input"], "材料必须进 input（开卷）")
+        self.assertEqual(enum[0]["output"].count("\n"), 2, "输出应为 3 条编号")
+
+    def test_toc_like_block_not_enumerated(self):
+        doc = "报告目录\n\n一、概述\n二、方法\n三、结果\n四、结论\n"
+        samples = InstructionConverter()._generate_from_templates(doc, make_result(doc))
+        enum = [s for s in samples if "逐条列举并编号" in s["instruction"]]
+        self.assertEqual(enum, [], "短标题目录不应生成列举样本")
+
+
 if __name__ == "__main__":
     unittest.main()

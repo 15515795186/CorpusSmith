@@ -29,6 +29,8 @@ class InstructionConverter:
             return []
 
         text = result.text.strip()
+        # 剥离扫描/转换残留的 markdown 加粗标记（保留内容，去除 ** 对）
+        text = re.sub(r'\*\*([^*\n]+?)\*\*', r'\1', text)
         samples = []
 
         # 先尝试用模板规则生成
@@ -46,134 +48,213 @@ class InstructionConverter:
 
         return samples
 
+    # 开卷样本材料/输出长度上限
+    MATERIAL_MAX = 1200
+    OUTPUT_MAX = 1000
+
     def _generate_from_templates(self, text: str, result: ReaderResult) -> List[Dict]:
-        """从文本结构中用模板生成指令对"""
+        """从文本结构中用模板生成指令对
+
+        字段语义约束（训练用途）：
+        - 答案内容来自某篇具体文档的样本（标题阅读、列表提取），来源材料
+          必须放进 input——模型学的是"根据所给材料作答"（开卷），否则等于
+          要求模型闭卷背诵一篇没见过的文档，是在教幻觉；
+        - 自包含通识样本（定义句抽取：题目不含特定文档指向）input 为空是合规的。
+        """
         samples = []
         source = os.path.basename(result.filepath)
 
-        # 1. 从标题 + 后续内容生成"什么是XX"问题
+        # 1. 标题段落 → 阅读理解（旧实现的标题模板 output 恒为 None，从未生效；
+        #    现按"材料进 input、抽取式要点进 output"落地）
         heading_pattern = re.compile(r'^#{1,3}\s+(.+)$', re.MULTILINE)
         headings = list(heading_pattern.finditer(text))
 
         for i, m in enumerate(headings):
             title = m.group(1).strip()
-            # 找标题后的内容（直到下一个标题或结束）
             start = m.end()
             end = headings[i + 1].start() if i + 1 < len(headings) else len(text)
             content = text[start:end].strip()
-
-            if content and len(content) > 20:
-                # 生成不同类型的指令
-                for template in self._get_title_templates(title):
-                    instruction, input_text, output = template
-                    if output:
-                        samples.append({
-                            "instruction": instruction,
-                            "input": input_text,
-                            "output": output[:1000],  # 截断过长输出
-                            "source": source,
-                        })
-                        if len(samples) >= 30:
-                            return samples
-
-        # 2. 从列表中提取
-        list_pattern = re.compile(r'^[\-\*]\s+(.+)$', re.MULTILINE)
-        list_items = list_pattern.findall(text)
-        list_items = [item.strip() for item in list_items if item.strip()]
-
-        if len(list_items) >= 3:
-            # 查找列表前的上下文（找前面最近的标题或段落）
-            context = self._find_list_context(text, list_items)
-            if context:
-                for template in self._get_list_templates(context, list_items):
-                    instruction, input_text, output = template
-                    if output:
-                        samples.append({
-                            "instruction": instruction,
-                            "input": input_text,
-                            "output": output[:2000],
-                            "source": source,
-                        })
-                        if len(samples) >= 30:
-                            return samples
-
-        # 3. 从定义式句子中提取
-        def_pattern = re.compile(r'^(.{2,30})(?:是指|指的是|即|是(?:一[种类])?|属于|意为)(.{10,200})', re.MULTILINE)
-        for m in def_pattern.finditer(text):
-            term = m.group(1).strip()
-            definition = m.group(2).strip()
-            if term and definition:
+            if len(content) < 60:
+                continue
+            material = content[:self.MATERIAL_MAX]
+            # 要点必须从截断后的材料里抽取：output 引用 input 之外的内容=开卷变闭卷
+            key_points = self._key_points(material)
+            # 纯编号标题（第四条/（三）/附录2）不携带语义，指代进题面反成噪声
+            generic = bool(re.fullmatch(
+                r'第[一二三四五六七八九十0-9]+[章节条款项]|附录\s*\d*|[（(]?[一二三四五六七八九十]{1,3}[）)]?',
+                title))
+            if contains_english(title) and not contains_chinese(title):
                 samples.append({
-                    "instruction": f"什么是{term}？",
-                    "input": "",
-                    "output": f"{term}是指{definition}",
+                    "instruction": f"Based on the following material about \"{title}\", "
+                                   f"summarize its key points.",
+                    "input": material,
+                    "output": key_points,
                     "source": source,
                 })
+            else:
+                samples.append({
+                    "instruction": (f"根据以下关于「{title}」的材料，总结其主要内容的要点。"
+                                    if not generic else
+                                    "根据以下材料，总结其主要内容的要点。"),
+                    "input": material,
+                    "output": key_points,
+                    "source": source,
+                })
+            if len(samples) >= 30:
+                return samples
+
+        # 2. 列表 → 提取整理（材料=列表原行，输出=编号整理结果）
+        list_pattern = re.compile(r'^[\-\*]\s+(.+)$', re.MULTILINE)
+        list_items = [item.strip() for item in list_pattern.findall(text) if item.strip()]
+
+        if len(list_items) >= 3:
+            context = self._find_list_context(text, list_items)
+            # 预算内截断，保证输出条目全部见于材料
+            kept, used = [], 0
+            for item in list_items:
+                if used + len(item) + 1 > self.MATERIAL_MAX:
+                    break
+                kept.append(item)
+                used += len(item) + 1
+            if len(kept) >= 3:
+                numbered = "\n".join(f"{i + 1}. {item}" for i, item in enumerate(kept))
+                ref = f"其中关于「{context}」的" if context else "其中的"
+                samples.append({
+                    "instruction": f"根据以下材料，将{ref}条目逐条列举并编号。",
+                    "input": "\n".join(kept),
+                    "output": numbered[:2000],
+                    "source": source,
+                })
+            if len(samples) >= 30:
+                return samples
+
+        # 2b. 编号条目块（政策白皮书"一、二、三…"措施列表）→ 列举阅读。
+        #     并行措施不是时序流程（COT 收它会产出"逐步说明14点倡议的完整过程"
+        #     这类语义错配样本），正确任务形态是"根据材料逐条列举"。
+        numbered_re = re.compile(
+            r'^[（(]?[一二三四五六七八九十0-9]{1,4}[）)、.．][ 　]*(\S.*)$', re.MULTILINE)
+        ms = list(numbered_re.finditer(text))
+        i = 0
+        while i < len(ms):
+            j = i
+            # 相邻条目之间只允许空白（保证是同一个列举块）
+            while j + 1 < len(ms) and not text[ms[j].end():ms[j + 1].start()].strip():
+                j += 1
+            block = ms[i:j + 1]
+            i = j + 1
+            descs = [b.group(1).strip() for b in block]
+            if len(descs) < 3:
+                continue
+            lens = sorted(len(d) for d in descs)
+            if lens[len(lens) // 2] < 10:
+                continue  # 短词占多数：目录/章节名，不是实质条目
+            # 截到材料预算内，保证"答案不超出所给材料"
+            budget, kept = self.MATERIAL_MAX, []
+            raw = ""
+            for b, d in zip(block, descs):
+                seg = text[b.start():b.end()]
+                if len(raw) + len(seg) > budget:
+                    break
+                raw += seg + "\n"
+                kept.append(d)
+            if len(kept) < 3:
+                continue
+            context = self._find_list_context(text, [kept[0]])
+            if context and len(context) > 30:
+                context = ""
+            ref = f"其中关于「{context}」的" if context else "其中的"
+            out_numbered = "\n".join(f"{k + 1}. {d}" for k, d in enumerate(kept))
+            samples.append({
+                "instruction": f"根据以下材料，将{ref}内容要点逐条列举并编号。",
+                "input": raw.strip()[:self.MATERIAL_MAX],
+                "output": out_numbered[:2000],
+                "source": source,
+            })
+            if len(samples) >= 30:
+                return samples
+
+        # 3. 定义式句子 → 通识问答（自包含，input 允许为空）。严格清洗：
+        #    旧正则 (.{10,200}) 会把后文整段吞进答案、编号前缀留在术语里，
+        #    产出"什么是2. 我校…方式：一？"这类碎片——训练用途不可接受。
+        def_pattern = re.compile(
+            r'^(.{2,30})(是指|指的是|即|是(?:一[种类])?|属于|意为)(.{5,200})', re.MULTILINE)
+        for m in def_pattern.finditer(text):
+            sample = self._definition_sample(m.group(1), m.group(2), m.group(3), source)
+            if sample:
+                samples.append(sample)
                 if len(samples) >= 30:
                     return samples
 
         return samples
 
-    def _get_title_templates(self, title: str) -> List[tuple]:
-        """根据标题生成指令模板"""
-        templates = []
+    _TERM_MAX = 16
+    _TERM_BAD_TAIL = re.compile(r'(仍然|仍|并|都|也|将|应当|必须|可以|已|尚未|正在|需要|能够)$')
 
-        # 模板1: "什么是{title}"
-        templates.append((
-            f"什么是{title}？请详细介绍。", "", None
-        ))
+    def _clean_term(self, term: str) -> str:
+        """剥离 markdown 加粗残留、列表/章节编号前缀与首尾杂标点"""
+        term = term.replace('*', '').strip().strip('，,、；;：:。 ').strip()
+        prev = None
+        while prev != term:
+            prev = term
+            term = re.sub(r'^[（(][一二三四五六七八九十0-9]{1,3}[）)]\s*', '', term)
+            term = re.sub(r'^第[一二三四五六七八九十0-9]+[章节条款项][ 　]*', '', term)
+            term = re.sub(r'^[一二三四五六七八九十0-9]{1,3}[、.．:：]\s*', '', term)
+            term = term.strip()
+        return term
 
-        # 模板2: "解释{title}的概念"
-        templates.append((
-            f"解释一下{title}的主要内容和核心概念。", "", None
-        ))
+    def _definition_sample(self, term: str, connector: str, rest: str,
+                           source: str) -> Optional[Dict]:
+        """构造通过清洗门控的定义式样本，不合格返回 None"""
+        term = self._clean_term(term)
+        if not (2 <= len(term) <= self._TERM_MAX):
+            return None
+        if re.search(r'[：:]', term) or self._TERM_BAD_TAIL.search(term):
+            return None
+        definition = rest.strip()
+        if not definition or '是指' in definition[:12]:
+            return None
+        # 截到首个句末标点：答案自包含且不吃进下一条编号
+        end = re.search(r'[。！？!?]', definition)
+        if not end:
+            return None
+        definition = definition[:end.end()]
+        if len(definition) < 8:
+            return None
+        comma = "，" if connector.startswith(("是指", "指的是")) else ""
+        return {
+            "instruction": f"什么是{term}？",
+            "input": "",
+            "output": f"{term}{comma}{connector}{definition}",
+            "source": source,
+        }
 
-        # 模板3: "总结{title}"
-        templates.append((
-            f"请总结关于「{title}」的核心要点。", "", None
-        ))
-
-        # 模板4: 英文兼容
-        if contains_english(title):
-            templates.append((
-                f"What is {title}? Please explain in detail.", "", None
-            ))
-            templates.append((
-                f"Summarize the key points about {title}.", "", None
-            ))
-
-        return templates
-
-    def _get_list_templates(self, context: str, items: List[str]) -> List[tuple]:
-        """根据列表项生成指令模板"""
-        templates = []
-        list_text = "\n".join(f"{i+1}. {item}" for i, item in enumerate(items))
-
-        # 模板1: 列举
-        templates.append((
-            f"请列举{context}。", "",
-            f"以下是{context}的详细说明：\n{list_text}"
-        ))
-
-        # 模板2: 具体解释每条
-        if len(items) >= 2:
-            for i, item in enumerate(items):
-                templates.append((
-                    f"解释「{item}」的含义。", "",
-                    item
-                ))
-
-        return templates
+    def _key_points(self, content: str, max_points: int = 5) -> str:
+        """每段首句组成编号要点（确定性抽取，避免 output 与 input 整段重复）"""
+        points = []
+        for para in content.split("\n\n"):
+            para = para.strip()
+            if len(para) < 15:
+                continue
+            cut = None
+            for punct in "。！？!?.":
+                idx = para.find(punct, 12)
+                if 0 < idx <= 160 and (cut is None or idx < cut):
+                    cut = idx + 1
+            sent = (para[:cut] if cut else para[:120]).strip()
+            points.append(f"{len(points) + 1}. {sent}")
+            if len(points) >= max_points:
+                break
+        return "\n".join(points) if points else content[:200].strip()
 
     def _find_list_context(self, text: str, items: List[str]) -> str:
-        """查找列表项的上下文（前面最近的标题或句子）"""
+        """查找列表项的上下文（前面最近的标题或句子）；找不到返回空串"""
         if not items:
-            return "相关内容"
+            return ""
 
         first_item = items[0]
         idx = text.find(first_item)
         if idx < 0:
-            return "相关内容"
+            return ""
 
         # 找前面的标题
         before = text[:idx]
@@ -184,11 +265,14 @@ class InstructionConverter:
         # 找前面第一个句号/冒号前的文本
         sentences = re.split(r'[。：:]', before)
         if sentences:
-            ctx = sentences[-1].strip()
+            ctx = re.sub(r'\s+', ' ', sentences[-1].strip())
+            # 去掉条目自身编号粘连（"…政策宣示 一、"）
+            ctx = re.sub(r'[（(]?[一二三四五六七八九十0-9]{1,4}[）)、.．]\s*$', '', ctx)
+            ctx = ctx.strip(' ，,、；;。')
             if len(ctx) > 2:
                 return ctx
 
-        return "相关内容"
+        return ""
 
     def _generate_with_llm(self, text: str, result: ReaderResult) -> List[Dict]:
         """调用LLM生成指令-输出对"""
@@ -243,14 +327,16 @@ class InstructionConverter:
 要求：
 1. 指令要多样，覆盖不同信息维度
 2. 答案必须严格基于文本内容，不编造
-3. 输出JSON数组格式
+3. 题目需要参考原文材料才能作答的，把相关材料节选放入 input；题目自包含（不指向特定文档的通识问答）input 留空
+4. 输出JSON数组格式
 
 文本内容：
 {text}
 
 请按以下格式输出（严格JSON数组）：
 [
-  {{"instruction": "xxx", "input": "", "output": "xxx"}},
+  {{"instruction": "根据以下材料，总结……", "input": "（材料节选……）", "output": "……"}},
+  {{"instruction": "什么是XX？", "input": "", "output": "……"}},
   ...
 ]"""
         else:
@@ -260,14 +346,16 @@ Cover multiple dimensions: summarization, extraction, Q&A, reasoning, etc.
 Requirements:
 1. Diverse instructions
 2. Answers must be strictly based on the text
-3. Output in JSON array format
+3. If a question requires source material to answer, put an excerpt of that material in "input"; leave "input" empty only for self-contained general-knowledge questions
+4. Output in JSON array format
 
 Text:
 {text}
 
 Output format (strict JSON array):
 [
-  {{"instruction": "xxx", "input": "", "output": "xxx"}},
+  {{"instruction": "Based on the following material, summarize...", "input": "(material excerpt...)", "output": "..."}},
+  {{"instruction": "What is X?", "input": "", "output": "..."}},
   ...
 ]"""
 
