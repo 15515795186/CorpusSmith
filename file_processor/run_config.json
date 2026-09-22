@@ -1,0 +1,27 @@
+{
+  "input_dirs": {
+    "pdf_download": "data/文本pdf",
+    "pdf_download_cn": "data/文本pdf中文版",
+    "word": "data/word",
+    "html_source": "data/源码html",
+    "txt": "data/txt"
+  },
+  "files": null,
+  "output_dir": "datasets",
+  "output_prefix": "",
+  "output_types": ["pretrain", "instruction", "cot"],
+  "min_text_length": 30,
+  "max_text_length": 1000000,
+  "chunk_size": 1024,
+  "chunk_overlap": 128,
+  "enable_llm": false,
+  "max_workers": 8,
+  "ocr_min_text_chars": 50,
+  "quality_enabled": true,
+  "quality_model": "qwen-plus",
+  "quality_min_per_dimension": 3,
+  "quality_min_total": 20,
+  "resume": false,
+  "use_read_cache": true,
+  "save_rejected": true
+}

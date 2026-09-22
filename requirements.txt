@@ -1,0 +1,23 @@
+# ===== 核心运行依赖（file_processor 主流程）=====
+pymupdf>=1.24          # PDF 文本提取 + 页面渲染（import pymupdf / fitz）
+pypdf>=4.0             # pymupdf 不可用时的回退提取器
+beautifulsoup4>=4.12   # HTML 解析
+lxml>=5.0              # BeautifulSoup 解析器
+python-docx>=1.1       # .docx 读取
+langchain-text-splitters>=0.3   # 预训练数据分块
+dashscope>=1.20        # 通义千问 Qwen-VL OCR / qwen-plus 质量评分
+chardet>=5.0           # TXT 编码自动检测
+tqdm>=4.66             # 进度条
+
+# ===== 可选：LLM 生成指令/COT（--llm --llm-provider openai）=====
+openai>=1.30
+
+# ===== 可选：数据采集/构建工具链（data/_pipeline，重跑数据构建时才需要）=====
+requests>=2.31
+Pillow>=10.0
+
+# 说明：
+# - 测试使用标准库 unittest，无需额外依赖：
+#     python -m unittest discover -s tests -v
+# - 本地 baidu/Unlimited-OCR 方案已废弃（见 _archive/），因此不再需要
+#   torch / transformers。

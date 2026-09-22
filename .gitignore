@@ -1,0 +1,31 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# ---- 工具/IDE ----
+.idea/
+.vscode/
+.jbeval/
+
+# ---- 数据与产出（体积大，可由 data/_pipeline 重建）----
+data/
+datasets/
+.cache/
+ocr_temp/
+output/
+*.log
+
+# ---- 测试 ----
+.test_tmp/
+test_out.txt
+test_err.txt
+
+# ---- 密钥/本地配置 ----
+.env
+*.env
+*.local.json
+run_quality_score.local.py
