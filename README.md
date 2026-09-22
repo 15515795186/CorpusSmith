@@ -10,11 +10,12 @@
 | 特性 | 说明 |
 |------|------|
 | 增量可复用 | 读取结果（含 OCR）落盘缓存，重跑不再重复解析、不重复调用付费 API |
-| 断点续跑 | `--resume` 保留已有输出并跳过已处理来源，OCR 中断后可直接接着跑 |
+| 断点续跑 | `--resume` 在**读取之前**就跳过已产出与确定性淘汰的来源；质检因限流淘汰的来源会自动重试 |
 | 结果可复现 | 文件按路径排序处理；每次运行重建输出，不再出现跨次运行记录堆叠 |
 | 可诊断 | 被丢弃文本写入 `rejected.jsonl` 并统计原因，便于定位阈值/OCR 质量问题 |
 | 确定性产出 | 每次运行生成 `run_report.json`（文件数、缓存命中、丢弃原因、数据集规模、脱敏配置） |
-| 无外部依赖测试 | 87 个单元 + 端到端测试（标准库 unittest），不需要 API key |
+| 凭据安全 | 项目根 `.env` 自动加载（gitignore 覆盖），真实环境变量优先；key 永不写入代码/仓库/注册表 |
+| 无外部依赖测试 | 94 个单元 + 端到端测试（标准库 unittest），不需要 API key |
 
 ---
 
@@ -26,6 +27,7 @@ LLM_Data_Test/
 │   ├── main.py                      # CLI 入口
 │   ├── pipeline.py                  # 管道编排：扫描→读取→清洗→质检→转换→输出
 │   ├── config.py                    # 全局配置（dataclass + JSON 覆盖）
+│   ├── dotenv.py                    # 零依赖 .env 加载器（真实环境变量优先）
 │   ├── quality_scorer.py            # qwen-plus 多维度质量评分（并发）
 │   ├── run_config.json              # 运行配置：可提取文本的 250 个文件
 │   ├── run_config_ocr.json          # 运行配置：需 OCR 的 150 个文件
@@ -49,9 +51,10 @@ LLM_Data_Test/
 ├── datasets/                        # 产出目录（每次运行重建）
 ├── tests/                           # 单元与端到端测试
 ├── _archive/                        # 已废弃的本地 OCR 方案（见其 README）
-├── check_progress.py                # 进度查看：输入量 / 产出 / 缓存 / 报告 / 日志
-├── verify_datasets.py               # 产出自检：重复记录 / 字段缺失 / 编码 / 分块一致性
-├── run_quality_score.py             # 对已有数据集重新评分（不破坏原文件）
+├── check_progress.py                # 进度查看：输入量 / 产出 / 缓存 / 报告 / 日志（自动选最新 ocr_run*.log）
+├── verify_datasets.py               # 产出自检：重复记录 / 字段缺失 / 编码 / 分块 / metadata 口径
+├── run_quality_score.py             # 对已有数据集重新评分（独立口径，不破坏原文件）
+├── .env.example                     # 凭据模板（复制为 .env 填 key；.env 已被 gitignore）
 ├── requirements.txt
 └── README.md
 ```
@@ -82,7 +85,7 @@ python -m file_processor.main --config file_processor/run_config.json
 # 5. 处理 150 个需要 OCR 的文件（耗时较长，建议后台运行）
 python -m file_processor.main --config file_processor/run_config_ocr.json
 
-# 6. 中断后接着跑（已处理的文件不会重复调用 OCR API）
+# 6. 中断后接着跑（已处理来源在读/评/写之前就跳过；质检被限流淘汰的会自动重试）
 python -m file_processor.main --config file_processor/run_config_ocr.json --resume
 
 # 7. 查看进度
@@ -162,7 +165,7 @@ python check_progress.py
 datasets/
 ├── pretrain/
 │   ├── data.jsonl
-│   └── metadata.json          # 记录数 / 来源数 / 生成时间 / 关键配置
+│   └── metadata.json          # 记录数 / 来源数（累计口径）/ 本次新增来源 / 生成时间 / 关键配置
 ├── instruction/
 │   ├── data.jsonl
 │   └── metadata.json
@@ -209,7 +212,7 @@ datasets/
 **长文档抽样送评**：超过约 3700 字的文本按 开头/中部/结尾 三段各 1200 字送评，段间以
 `【……中间内容因长度限制省略……】` 标记连接，提示词明确该标记不视为截断（见排错要点）。
 
-- 未配置 API key 时自动跳过评分（仅走启发式过滤），并打印提示；
+- **API key 来源**：真实环境变量 `DASHSCOPE_API_KEY` > 项目根 `.env`（自动加载，见快速开始）；两者都没有时自动跳过评分（仅走启发式过滤）并打印提示；
 - 因 API 错误（key 失效/配额）被淘汰的条数会在报告 `api_errors` 中单独统计，避免误判为数据质量问题。
 
 ---
@@ -238,7 +241,7 @@ datasets/
 | `--min-text-length` | 最小文本长度（默认 30） |
 | `--dedup-threshold` | SimHash 文档判重阈值（默认 0.90，越高越保守） |
 | `--max-samples` | 每类数据集样本上限（0 = 不限） |
-| `--resume` | 保留已有输出，跳过已处理来源（配合读取缓存实现真正的续跑） |
+| `--resume` | 保留已有输出；已产出/确定性淘汰的来源在读取前即跳过，质检淘汰来源自动重试 |
 | `--no-cache` / `--clear-cache` | 禁用 / 清空读取缓存 |
 | `--no-quality` | 即使有 API key 也跳过 LLM 评分 |
 | `--no-rejected` | 不生成 `rejected.jsonl` |
@@ -255,12 +258,14 @@ datasets/
 python -m unittest discover -s tests -v
 ```
 
-覆盖：配置解析与 key 脱敏、输出布局与重建/续跑语义、样本级精确去重、读取缓存失效、
+覆盖：配置解析与 key 脱敏、`.env` 加载器（shell 优先/重复键先到先得/缺文件静默/路径指向项目根）、
+输出布局与重建/续跑语义、样本级精确去重、读取缓存失效、
 中文标点保护、编号步骤/列表换行保留、质量过滤误判回归、去重指纹稳定性（金样例）与
 bigram/长度比标定语义、质检抽样策略（头/中/尾三段、保留真实结尾）与响应解析、
 各读取器（文字/扫描 PDF 分流、OCR 临时目录清理、GBK 编码、HTML 类型判定与
 行内链接不切碎段落、wiki 皮肤容器剥离）、清洗器（界面残留/页脚/Category 标签清除）、
-三种格式转换、pipeline 端到端（含重跑不重复、resume 命中缓存）。
+三种格式转换、pipeline 端到端（含重跑不重复、resume 读前跳过与确定性丢弃集、
+metadata 累计来源口径）。
 测试不需要 API key，也不写工作区之外的文件。
 
 ---
@@ -284,14 +289,13 @@ bigram/长度比标定语义、质检抽样策略（头/中/尾三段、保留�
   - token 用 **bigram**（中文相邻字 + 英文相邻词）。旧实现中文单字/英文单词在同领域语料上误杀严重：白皮书 18/50、arXiv 论文 12/50。
   - 只清"近乎复制"：相似度 ≥ 0.90 且长度比 ≥ 0.6。同模板不同填充的文档（不同高校简介页 0.906/0.891、白皮书不同主题系列 0.78-0.83）全部保留；真正的模板重复件（两份申报书 0.938）被识别。
   - 样本级兜底：`JSONLFormatter` 在写入时跳过与同一数据集已有记录**完全相同**的记录（本次实测拦下 37 条跨来源重复指令样本），`run_report.json` 中计为 `exact_duplicate_samples_skipped`。
-- **输出重建**：每次运行默认清空目标 `data.jsonl`；需要追加/续跑时使用 `--resume`。
+- **输出重建与续跑**：每次运行默认清空目标 `data.jsonl`；`--resume` 改为追加，并且**跳过判定前移到读取之前**——跳过集 =（各数据集已产出来源 ∪ 上轮 `rejected.jsonl` 中 clean/filter 阶段的确定性丢弃来源）。被跳过者不再读取/评分/转换；`quality` 阶段淘汰（限流、瞬时 API 错误、内容审核误伤）仍会重试，实测重跑可救回约 4/5。
+  注意"确定性丢弃"必须一起跳过：SimHash 判重依赖同轮上下文，近重复文档单独重跑时会因相似对象缺席而放行、污染数据集（该 bug 由 resume 前移测试暴露并修复）。resume 时 `rejected.jsonl` 为**追加**写，保留历史判据。
+- **metadata.sources 是累计口径**：resume 补跑只写本次几个来源时，旧实现会把累计 248 覆盖成 4；现在写累计值并另记 `sources_this_run`，`verify_datasets.py` 增加二者一致性校验（历史产出已用一次性脚本修正为 248/218/220）。
 - **读取缓存位置**：`.cache/read_cache.jsonl`（键为绝对路径 + mtime + size，文件变化自动失效；只缓存成功结果）。
 - **临时目录**：扫描 PDF 渲染页写入 `ocr_temp/`（`ocr_work_dir` 可配），运行后自动清理。
-- **日志**：使用 `ocr_run.log` 记录后台运行日志；`check_progress.py` 会解析其中的 OCR 页面进度。
-- **已知待优化点**：`--resume` 的"跳过已处理来源"发生在输出阶段而非评分前——被淘汰来源触发重跑时，
-  已通过来源也会被重新评分（读取全部命中缓存不再计费，仅重复评分调用有小量成本）。
-  后续可把跳过判定前移到评分入口；若因 API 偶发限流出现 `Max retries exceeded`，
-  直接再跑一次 `--resume` 即可救回（实测 4/5 救回）。
+- **日志**：后台运行建议 `cmd /c "python -m file_processor.main ... > ocr_runN.log 2>&1"`（pwsh 的 `>` 会写出 UTF-16 造成乱码）；`check_progress.py` 自动选择最新的 `ocr_run*.log`，也可 `python check_progress.py 指定日志` 覆盖。
+- **限流救回**：若因 API 偶发限流出现 `Max retries exceeded`，直接再跑一次 `--resume` 即可（只重试质检淘汰来源，其余全部跳过）。
 
 ---
 
@@ -327,3 +331,8 @@ bigram/长度比标定语义、质检抽样策略（头/中/尾三段、保留�
 | 质检只送前 3000 字且提示词惩罚"截断"，长文被系统性误杀（通过率 8.1%） | 头/中/尾三段抽样 + 省略标记 + 规则区分"抽样断开/真实截断"，通过率恢复至 60.5%，完整性均分 2.2→4.13 |
 | wiki 下载件带导航横幅、页脚模板、`Category:` 标签；注释文本混入正文；行内链接把句子切成三段 | HTML reader 剥离皮肤容器 + 排除注释节点 + 块级缓冲重组段落；TextCleaner 增加 UI 行/短语级清除（真实文件实测零残留） |
 | 质检评分限流时只留 "Max retries exceeded" 无法诊断 | 保留末次真实错误信息、重试 3→4 次；250 批 api_errors 6→1 |
+| key 依赖手动 export / setx（明文进注册表） | 新增零依赖 `.env` 自动加载（shell 优先、gitignore 覆盖、值不落日志）+ `.env.example` 模板 + 6 个单测 |
+| `--resume` 跳过判定在输出阶段：已通过来源被重复评分（烧 API） | 判定前移到读取之前：读/评/写全免；质检淘汰来源仍重试（限流可救回） |
+| resume 单独重跑近重复文档会因判重上下文丢失而放行（新跳过逻辑暴露的隐患） | 跳过集并入上轮 clean/filter 确定性丢弃来源；rejected.jsonl 改追加写保留历史判据 |
+| resume 补跑把 `metadata.sources` 从 248 覆盖成本次的 4 | 写累计口径并新增 `sources_this_run`；`verify_datasets.py` 增加一致性校验；历史值已修复 |
+| `check_progress.py` 写死 `ocr_run.log`（实际日志名带批次后缀） | 自动选择最新 `ocr_run*.log`，支持位置参数显式指定 |

@@ -183,12 +183,35 @@ class FileProcessorPipeline:
 
         # 1. 扫描文件（排序保证可复现）
         files = self._scan_files()
+        self.stats.total_files = len(files)
+        self.files_skipped_resume = 0
+
+        # 1b. resume：整体跳过两类来源（读取/OCR/评分/转换都不再做）——
+        #     ① 已产出记录的来源（各数据集来源并集）；
+        #     ② 上轮在清洗/过滤阶段被"确定性"丢弃的来源（含 SimHash 近重复）：
+        #        重跑结果不变，且单独重跑会因判重上下文丢失而放行、污染数据集。
+        #     质检(quality 阶段)淘汰不在此列——API 限流等瞬时错误需要重跑救回。
+        if self.config.resume and files:
+            done: set = set()
+            for name in self.config.output_types:
+                done |= self.formatter.read_sources(name)
+            done |= self._previous_deterministic_rejections()
+            if done:
+                kept = [f for f in files if os.path.basename(f) not in done]
+                self.files_skipped_resume = len(files) - len(kept)
+                files = kept
+                logger.info("[Resume] 跳过 %d 个来源（已产出或确定性丢弃），待处理 %d 个",
+                            self.files_skipped_resume, len(files))
+
         if not files:
-            logger.warning("[WARN] 未找到任何可处理的文件")
+            if self.files_skipped_resume:
+                logger.info("[Resume] 全部 %d 个来源均已处理过，无需重跑",
+                            self.files_skipped_resume)
+            else:
+                logger.warning("[WARN] 未找到任何可处理的文件")
             return
 
-        self.stats.total_files = len(files)
-        logger.info("[Files] 发现 %d 个文件", len(files))
+        logger.info("[Files] 待处理 %d 个文件", len(files))
 
         # 2. 准备输出目录（非 resume 时清空旧结果）
         if not self.config.resume:
@@ -472,9 +495,12 @@ class FileProcessorPipeline:
             self.stats.cot_samples = total_samples
 
         output_path = self.formatter.get_path(name)
+        # sources = 累计口径（resume 时本次可能只有个位数来源，若直接写本次值
+        # 会把 metadata 里历史的 244+ 覆盖掉）；本次新增另记 sources_this_run
         self.formatter.write_metadata(
             name,
-            sources=written_sources,
+            sources=len(self.formatter.read_sources(name)),
+            sources_this_run=written_sources,
             generated_at=datetime.now().isoformat(timespec="seconds"),
             elapsed_seconds=round(time.time() - self._t0, 1),
             config={
@@ -496,7 +522,9 @@ class FileProcessorPipeline:
             return
         if self._rejected_file is None:
             os.makedirs(os.path.dirname(os.path.abspath(self.rejected_path)) or ".", exist_ok=True)
-            self._rejected_file = open(self.rejected_path, "w", encoding="utf-8")
+            # resume 追加而非覆盖：历史"确定性丢弃"记录是下轮跳过判据的一部分
+            mode = "a" if self.config.resume else "w"
+            self._rejected_file = open(self.rejected_path, mode, encoding="utf-8")
         record = {
             "source": source,
             "stage": stage,
@@ -512,12 +540,45 @@ class FileProcessorPipeline:
             self._rejected_file.close()
             self._rejected_file = None
 
+    def _previous_deterministic_rejections(self) -> set:
+        """上轮 rejected.jsonl 中"确定性丢弃"（filter 阶段 / clean 空文本）的来源集合
+
+        SimHash 近重复是典型：b.txt 上轮因与 a.txt 相似被滤，本轮若单独重跑，
+        相似对象不在场 → 过滤放行 → 数据集混入近重复。quality 阶段淘汰
+        不在此列（API 限流/瞬时错误可重跑救回，实测救回 4/5）。
+        """
+        out: set = set()
+        if not os.path.exists(self.rejected_path):
+            return out
+        try:
+            with open(self.rejected_path, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    src = rec.get("source")
+                    if not src:
+                        continue
+                    stage = rec.get("stage")
+                    if stage == "filter" or (stage == "clean"
+                                             and rec.get("reason") == "empty_after_clean"):
+                        out.add(os.path.basename(str(src)))
+        except OSError as e:
+            logger.warning("[Resume] 读取 %s 失败: %s", self.rejected_path, e)
+        return out
+
     def _write_run_report(self, files: List[str], cleaned_results: List[ReaderResult]):
+        skipped = getattr(self, "files_skipped_resume", 0)
         report = {
             "started_at": self.started_at.isoformat(timespec="seconds"),
             "finished_at": datetime.now().isoformat(timespec="seconds"),
             "elapsed_seconds": round(time.time() - self._t0, 1),
-            "total_files": len(files),
+            "total_files": len(files) + skipped,
+            "files_skipped_resume": skipped,
             "files_processed": self.stats.files_processed,
             "files_failed": self.stats.files_failed,
             "cache": self.cache.summary(),

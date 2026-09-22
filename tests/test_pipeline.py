@@ -116,7 +116,7 @@ class PipelineEndToEndTest(unittest.TestCase):
 
         self.assertEqual(first, second, "重跑必须重建输出，不能堆叠旧记录")
 
-    def test_resume_skips_already_processed_and_uses_cache(self):
+    def test_resume_skips_done_sources_before_scoring(self):
         FileProcessorPipeline(self.config).run()
         first = {name: self._count(name) for name in ("pretrain", "instruction", "cot")}
 
@@ -129,7 +129,49 @@ class PipelineEndToEndTest(unittest.TestCase):
         second = {name: self._count(name) for name in ("pretrain", "instruction", "cot")}
 
         self.assertEqual(first, second)
-        self.assertEqual(pipeline.stats.cache_hits, 4, "resume 重跑应全部命中读取缓存")
+        # done = {a.txt, page.html}（已产出）∪ {b.txt(近重复), short.txt(过短)}（确定性丢弃）
+        # → 本轮无事可做，连读取都不发生（这正是前移跳过的意义）
+        self.assertEqual(pipeline.files_skipped_resume, 4)
+        self.assertEqual(pipeline.stats.cache_hits, 0)
+        self.assertEqual(pipeline.stats.files_processed, 0)
+
+    def test_resume_processes_only_new_files(self):
+        pipeline = FileProcessorPipeline(self.config)
+        pipeline.run()
+        first = {name: self._count(name) for name in ("pretrain", "instruction", "cot")}
+        base_meta = json.load(open(os.path.join(self.out_dir, "pretrain", "metadata.json"),
+                                   encoding="utf-8"))
+        # b.txt 是 a.txt 的近重复（过滤阶段确定性丢弃），short.txt 过短 → 均不在输出
+        self.assertEqual(base_meta["sources"], 2)
+
+        # 新主题文档，避开与 a/b 的 SimHash 相似区
+        self._write(os.path.join(self.txt_dir, "c.txt"),
+                    "红烧肉的做法：五花肉切块焯水，冰糖炒色后下肉翻炒，"
+                    "加生抽老抽料酒与葱姜，小火焖炖四十分钟收汁即成。\n\n"
+                    "清蒸鲈鱼的做法：鱼身改刀抹盐铺姜丝，水开后旺火蒸八分钟，"
+                    "淋蒸鱼豉油与热油，葱丝点缀即可上桌食用。\n\n"
+                    "番茄炒蛋的做法：鸡蛋打散炒至凝固盛出，番茄炒软出汁后回锅，"
+                    "加糖与盐调味翻炒均匀，撒葱花装盘完成整道菜。\n")
+
+        resume_config = ProcessorConfig(**{**self.config.to_dict(), "resume": True})
+        pipeline = FileProcessorPipeline(resume_config)
+        pipeline.run()
+
+        second = {name: self._count(name) for name in ("pretrain", "instruction", "cot")}
+        self.assertGreater(second["pretrain"], first["pretrain"], "新文件 c.txt 应产出新记录")
+
+        # 本轮发现 5 个文件；done = {a,page}（已产出）∪ {b,short}（确定性丢弃）
+        # → kept 只剩 c.txt
+        self.assertEqual(pipeline.files_skipped_resume, 4)
+        self.assertEqual(pipeline.stats.files_processed, 1)
+        meta = json.load(open(os.path.join(self.out_dir, "pretrain", "metadata.json"),
+                              encoding="utf-8"))
+        self.assertEqual(meta["sources"], 3, "metadata.sources 必须是累计口径")
+        self.assertEqual(meta["sources_this_run"], 1, "本次新增来源单独记录")
+        with open(os.path.join(self.out_dir, "run_report.json"), encoding="utf-8") as f:
+            report = json.load(f)
+        self.assertEqual(report["total_files"], 5, "发现总数 = 待处理 1 + 跳过 4")
+        self.assertEqual(report["files_skipped_resume"], 4)
 
     def test_cache_disabled_still_works(self):
         self.config.use_read_cache = False

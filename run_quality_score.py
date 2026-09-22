@@ -6,6 +6,8 @@
   # 默认：读取数据集，把通过质检的子集写到 data.scored.jsonl（不覆盖原文件）
   python run_quality_score.py --dataset pretrain
 
+  # key 来源优先级：--api-key > 环境变量 > 项目根 .env
+
   # 覆盖原文件（会先备份为 data.jsonl.bak）
   python run_quality_score.py --dataset pretrain --in-place
 
@@ -27,6 +29,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from file_processor.quality_scorer import QualityScorer
+from file_processor.dotenv import load_dotenv
 
 TEXT_FIELDS = ("text", "output", "instruction")
 
@@ -80,6 +83,7 @@ def parse_args():
 
 def main():
     args = parse_args()
+    load_dotenv()  # 项目根 .env 可用时自动补齐 key（真实环境变量优先）
 
     api_key = args.api_key or os.environ.get("DASHSCOPE_API_KEY", "")
     if not api_key:

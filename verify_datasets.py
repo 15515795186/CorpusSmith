@@ -35,11 +35,15 @@ def check(name, required):
     sources = Counter((r.get("meta") or {}).get("source") or r.get("source") for r in records)
     missing_keys = sum(1 for r in records if any(k not in r for k in required))
     bad_fffd = sum(1 for r in records if "\ufffd" in json.dumps(r, ensure_ascii=False))
-    status = "OK" if (exact == 0 and missing_keys == 0 and meta["records"] == len(records)) else "ISSUE"
+    meta_sources = meta.get("sources")
+    sources_ok = meta_sources is None or meta_sources == len(sources)
+    status = "OK" if (exact == 0 and missing_keys == 0
+                      and meta["records"] == len(records) and sources_ok) else "ISSUE"
     if status == "ISSUE":
         OK = False
     print(f"[{status}] {name}: records={len(records)} (metadata={meta['records']}) "
-          f"sources={len(sources)} exact_dup={exact} missing_keys={missing_keys} U+FFFD={bad_fffd}")
+          f"sources={len(sources)} (meta={meta_sources}) "
+          f"exact_dup={exact} missing_keys={missing_keys} U+FFFD={bad_fffd}")
     print(f"        size={os.path.getsize(os.path.join(OUT, name, 'data.jsonl'))/1024/1024:.2f} MB "
           f"top_source={sources.most_common(1)[0][0][:40]} ({sources.most_common(1)[0][1]} records)")
     return records

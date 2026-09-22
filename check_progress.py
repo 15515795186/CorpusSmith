@@ -17,7 +17,19 @@ if hasattr(sys.stdout, "reconfigure"):
 DATA_DIR = "data"
 DATASETS_DIR = "datasets"
 CACHE_FILE = os.path.join(".cache", "read_cache.jsonl")
-LOG_FILE = "ocr_run.log"
+
+
+def _latest_log() -> str:
+    """自动选最新的 OCR 运行日志（ocr_run.log / ocr_run2.log / ...），
+    也可用命令行第一个参数显式指定"""
+    if len(sys.argv) > 1:
+        return sys.argv[1]
+    import glob as _glob
+    logs = [p for p in _glob.glob("ocr_run*.log") if os.path.isfile(p)]
+    return max(logs, key=os.path.getmtime) if logs else "ocr_run.log"
+
+
+LOG_FILE = _latest_log()
 
 # 需要 OCR 才能处理的目录
 OCR_DIRS = ("版式pdf", "版式pdf中文版", "截图html")
