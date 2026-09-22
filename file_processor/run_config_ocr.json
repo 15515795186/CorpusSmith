@@ -21,7 +21,7 @@
   "quality_enabled": true,
   "quality_model": "qwen-plus",
   "quality_min_per_dimension": 3,
-  "quality_min_total": 20,
+  "quality_min_total": 18,
   "resume": false,
   "use_read_cache": true,
   "save_rejected": true

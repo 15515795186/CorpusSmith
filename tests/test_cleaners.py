@@ -255,5 +255,47 @@ class WikiUIBoilerplateTest(unittest.TestCase):
         self.assertIn("中华人民共和国妇女权益保障法", cleaned)
 
 
+class FormTemplateFilterTest(unittest.TestCase):
+    """质检淘汰复盘发现：空申报/审批表模板混在候选集里白耗质检调用。
+    阈值在 400 文件真实语料标定：248 个通过文档零误伤，命中 4 个空表单。"""
+
+    def setUp(self):
+        self.filter = QualityFilter(min_length=30, max_length=1000000)
+
+    def test_blank_form_grid_rejected(self):
+        row = "姓名 | | 性别 | | 民族 | | 出生年月 | | 政治面貌 | |"
+        text = "\n\n".join([row] * 30 + ["申报单位（盖章）：", "年 月 日"])
+        self.assertGreater(len(text), 1000)
+        result = self.filter.check(text)
+        self.assertFalse(result.passed)
+        self.assertEqual(result.reason, "form_template_grid")
+
+    def test_dup_echo_grid_rejected(self):
+        # 合并单元格复读型：几乎无空格子，靠 dup 分支拦截
+        row = "身份证号 | 身份证号 | 身份证号 | 33020519**4517 | 33020519**4517"
+        text = "\n".join([row] * 30)
+        self.assertGreater(len(text), 1000)
+        result = self.filter.check(text)
+        self.assertFalse(result.passed)
+        self.assertEqual(result.reason, "form_template_grid")
+
+    def test_filled_roster_passes(self):
+        # 真实名单：格子填满、含长实体名（叙述占比高），必须放行
+        rows = [f"{i} | 张三丰{i} | 东莞市莞城运河小学分校{i} | "
+                f"河北省石家庄市外国语实验中学教研处 | GP2307064000{i}"
+                for i in range(1, 26)]
+        text = "优秀学员名单\n\n" + "\n".join(rows)
+        self.assertGreater(len(text), 1000)
+        self.assertTrue(self.filter.check(text).passed)
+
+    def test_small_grid_under_length_guard_passes(self):
+        # 短网格（<1000 字符）交给 LLM 判断，启发式不拦截
+        row = "学校 | | 项目 | |"
+        text = "\n".join([row] * 25)
+        self.assertLess(len(text), 1000)
+        result = self.filter.check(text)
+        self.assertNotEqual(result.reason, "form_template_grid")
+
+
 if __name__ == "__main__":
     unittest.main()

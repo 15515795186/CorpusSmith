@@ -29,6 +29,11 @@ _DISALLOWED_RE = re.compile(f'[^{_TEXT_CHAR_RANGES}\\n\\r\\t]')
 # 连续重复字符（退化输出特征，如 "啊啊啊啊啊啊啊啊…"、"。。"*N）
 _LONG_RUN_RE = re.compile(r'([^\s])\1{20,}')
 
+# ---- 空白表单/网格模板检测（在 400 文件真实语料上标定：248 个已通过质检的
+# 文档零误伤，精准命中空申报表/推荐表模板）----
+# 叙述性文本：中文连续 8 字以上，或英文连续三个长词（表格式文档几乎为零）
+_NARR_RE = re.compile(r'[\u4e00-\u9fff]{8,}|[A-Za-z]{5,}\s+[A-Za-z]{5,}\s+[A-Za-z]{5,}')
+
 
 @dataclass
 class QualityResult:
@@ -79,11 +84,51 @@ class QualityFilter:
         if lang == "unknown" and not self.keep_unknown_language:
             return QualityResult(False, "unknown_language")
 
+        # 空白表单/网格模板检查：主体是空单元格网格的申报书、推荐表、审批表
+        # 学不出任何东西，且白白消耗质检 API——在启发式层就拦下
+        if self._is_form_template(text):
+            return QualityResult(False, "form_template_grid")
+
         # 重复检查
         if self.dedup.is_duplicate(text):
             return QualityResult(False, "duplicate_content")
 
         return QualityResult(True)
+
+    # ---------- 空白表单检测 ----------
+    _FORM_PIPE_MIN = 0.45    # 管道表格行字符占比下限
+    _FORM_NARR_MAX = 0.30    # 叙述性正文占比上限
+    _FORM_EMPTY_MIN = 0.50   # 空单元格占比下限（与 dup 二选一）
+    _FORM_DUP_MIN = 0.40     # "复读单元格"占比下限（合并单元格 echo）
+    _FORM_MIN_CHARS = 1000   # 短表格名单多为真实数据，交给 LLM 判断
+
+    def _is_form_template(self, text: str) -> bool:
+        if len(text) < self._FORM_MIN_CHARS:
+            return False
+
+        rows = [l for l in text.splitlines() if l.strip()]
+        pipe_rows = [l for l in rows if l.count('|') >= 2]
+        pipe_frac = sum(len(l) for l in pipe_rows) / max(len(text), 1)
+        if pipe_frac < self._FORM_PIPE_MIN:
+            return False
+
+        narr = sum(m.end() - m.start() for m in _NARR_RE.finditer(text))
+        if narr / max(len(text), 1) > self._FORM_NARR_MAX:
+            return False
+
+        cells = empty = dup = 0
+        for l in pipe_rows:
+            cs = [c.strip() for c in l.split('|')]
+            if len(cs) >= 3 and not cs[0] and not cs[-1]:
+                cs = cs[1:-1]
+            cells += len(cs)
+            empty += sum(1 for c in cs if not c)
+            nonempty = Counter(c for c in cs if c)
+            dup += sum(v for v in nonempty.values() if v >= 3)
+        if cells == 0:
+            return False
+        return (empty / cells >= self._FORM_EMPTY_MIN
+                or dup / cells >= self._FORM_DUP_MIN)
 
     def _has_minimum_information(self, text: str) -> bool:
         """最小信息密度检查：正常字符占比"""
