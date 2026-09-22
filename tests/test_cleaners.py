@@ -197,5 +197,63 @@ class SimHashTest(unittest.TestCase):
         self.assertFalse(dedup.is_duplicate("短文本"))
 
 
+class WikiUIBoilerplateTest(unittest.TestCase):
+    """质检实测反馈：维基文库下载件带导航/页脚/[编辑] 残留，
+    被评分模型点名为语言规范性缺陷 → 属于清洗器遗漏而非数据问题"""
+
+    def setUp(self):
+        self.cleaner = TextCleaner()
+
+    def test_nav_word_lines_removed(self):
+        text = ("跳转到内容 导航 搜索\n"
+                "阅读 编辑 查看历史\n"
+                "第一章 总则\n"
+                "本条例自公布之日起施行，研究人员对其进行了搜索与比对验证。")
+        cleaned = self.cleaner.clean(text)
+        self.assertNotIn("跳转到内容", cleaned)
+        self.assertNotIn("查看历史", cleaned)
+        self.assertIn("第一章 总则", cleaned)
+        # 含"搜索"的正常内容行不得误删
+        self.assertIn("进行了搜索与比对验证", cleaned)
+
+    def test_footer_and_edit_markers_removed(self):
+        text = ("《中华人民共和国妇女权益保障法》[编辑]\n"
+                "本作品翻译自公有领域文件。\n"
+                "第一条 为了保障妇女的合法权益，制定本法。")
+        cleaned = self.cleaner.clean(text)
+        self.assertNotIn("[编辑]", cleaned)
+        self.assertIn("第一条", cleaned)
+
+    def test_centralnotice_removed(self):
+        text = "CentralNotice zh-CN\n正文内容从这里开始，包含完整的句子。是的。"
+        cleaned = self.cleaner.clean(text)
+        self.assertNotIn("CentralNotice", cleaned)
+        self.assertIn("正文内容", cleaned)
+
+    def test_wiki_category_tag_removed(self):
+        """质检点名：'…亚太安全Category:釣魚臺列嶼' 紧贴中文的分类标签也须清除"""
+        text = ("中国将推动亚太安全Category:釣魚臺列嶼\n"
+                "Category: 政治安全\n"
+                "对话合作机制不断完善。")
+        cleaned = self.cleaner.clean(text)
+        self.assertNotIn("Category", cleaned)
+        self.assertIn("亚太安全", cleaned)
+        self.assertIn("对话合作机制不断完善", cleaned)
+
+    def test_skin_phrases_removed_from_merged_line(self):
+        """格式框/PD 声明被 reader 并进正文段落时，须按短语级清除"""
+        text = ("第八十六条\n\n"
+                "本法自2023年1月1日起施行。本作品来自中华人民共和国法律。"
+                "依据《中华人民共和国著作权法》第五条，本作品不适用于该法，"
+                "所以属于公有领域。 EPUB 用于电脑、手机、平板 MOBI 用于Kindle\n\n"
+                "下载中华人民共和国妇女权益保障法")
+        cleaned = self.cleaner.clean(text)
+        self.assertNotIn("公有领域", cleaned)
+        self.assertNotIn("EPUB", cleaned)
+        self.assertNotIn("Kindle", cleaned)
+        self.assertIn("本法自2023年1月1日起施行", cleaned)
+        self.assertIn("中华人民共和国妇女权益保障法", cleaned)
+
+
 if __name__ == "__main__":
     unittest.main()

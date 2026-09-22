@@ -339,7 +339,9 @@ class FileProcessorPipeline:
             source = os.path.basename(result.filepath)
             try:
                 if result.file_type in ("html_source", "html_screenshot"):
-                    clean = self.html_cleaner.clean(result.text)
+                    # HTML 结构化清洗后再走通用清洗（去界面残留/URL/断行等，
+                    # 质检实测 wiki 下载件带导航行与 [编辑] 标记）
+                    clean = self.text_cleaner.clean(self.html_cleaner.clean(result.text))
                 else:
                     clean = self.text_cleaner.clean(result.text)
 

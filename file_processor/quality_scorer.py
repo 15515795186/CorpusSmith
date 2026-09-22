@@ -14,7 +14,20 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
+# 长文本抽样标记：质检只看 开头/中部/结尾 三段，避免旧实现 text[:3000]
+# 把长文在句子中间切断后、模型又按规则给"内容完整性"打低分的自伤问题
+# （实测 250 篇通过率因此只有 8.1%，误杀原因清一色"结尾被截断"）。
+SAMPLE_MARK = "【……中间内容因长度限制省略……】"
+
 QUALITY_PROMPT = """你是一个严格的数据质量评估专家。请对以下文本进行多维度评分。
+
+关于送评文本的形态：
+- 长文档以抽样形式提供：开头、中部、结尾三段，段间以标记
+  "【……中间内容因长度限制省略……】" 连接。
+- 该省略标记是本系统插入的，不代表文档本身有缺失，不得因此扣分。
+- "内容完整性"只依据两点判断：开头段是否从正常位置开始；
+  结尾段是否自然收束（以完整句子/章节结束）。
+- 仅当结尾段本身停在句子中间（且其后没有省略标记）时，才属于真实截断。
 
 评分标准（每项1-5分）：
 1. 内容完整性 (Content Completeness)：文本有完整的开头和结尾，没有被截断或缺失关键部分
@@ -33,7 +46,8 @@ QUALITY_PROMPT = """你是一个严格的数据质量评估专家。请对以下
 关键规则：
 - 如果文本包含大量乱码、重复字符、或明显是OCR失败产物，第2项(语言规范性)必须≤2分
 - 如果文本过短(<50字)或内容空洞，第3项(信息密度)必须≤2分
-- 如果文本明显不完整(在句子中间截断)，第1项(内容完整性)必须≤2分
+- 如果结尾段在句子中间突兀中断（非省略标记所致），第1项(内容完整性)必须≤2分
+- 若文本以省略标记结束，说明结尾未展示，内容完整性不因抽样而扣分
 
 请严格评分，宁低勿高。低质量的训练数据会损害模型性能。
 
@@ -71,7 +85,7 @@ class QualityScorer:
 
     def __init__(self, api_key: str = "", model: str = "qwen-plus",
                  min_per_dimension: int = 3, min_total: int = 20,
-                 batch_size: int = 5, max_retries: int = 3,
+                 batch_size: int = 5, max_retries: int = 4,
                  max_workers: int = 4):
         self.api_key = api_key or os.getenv("DASHSCOPE_API_KEY", "")
         self.model = model
@@ -80,6 +94,22 @@ class QualityScorer:
         self.batch_size = batch_size
         self.max_retries = max_retries
         self.max_workers = max(1, max_workers)
+
+    @staticmethod
+    def _build_sample(text: str, chunk: int = 1200) -> str:
+        """长文本取 开头/中部/结尾 三段抽样；短文本原样返回
+
+        旧实现只送 text[:3000]，长文在句中被切断，模型按"截断"规则给
+        完整性打低分 → 通过率被系统性压低（实测 8.1%），属自伤误判。
+        """
+        if len(text) <= chunk * 3 + 100:
+            return text
+        head = text[:chunk]
+        mid_start = (len(text) - chunk) // 2
+        mid = text[mid_start:mid_start + chunk]
+        tail = text[-chunk:]
+        sep = f"\n\n{SAMPLE_MARK}\n\n"
+        return head + sep + mid + sep + tail
 
     def score(self, text: str) -> QualityScore:
         """对单条文本进行质量评分"""
@@ -96,6 +126,8 @@ class QualityScorer:
             return QualityScore(passed=False, error=f"dashscope 未安装: {e}")
 
         dashscope.api_key = self.api_key
+        sample = self._build_sample(text)
+        last_err = ""
 
         for attempt in range(self.max_retries):
             try:
@@ -103,19 +135,20 @@ class QualityScorer:
                     model=self.model,
                     messages=[
                         {"role": "system", "content": QUALITY_PROMPT},
-                        {"role": "user", "content": f"请评估以下文本质量：\n\n{text[:3000]}"},
+                        {"role": "user", "content": f"请评估以下文本质量：\n\n{sample}"},
                     ],
                     temperature=0.1,
                     max_tokens=512,
                     result_format="message",
                 )
                 if response.status_code != 200:
+                    last_err = f"HTTP {response.status_code}: {str(response.message)[:140]}"
                     logger.warning("Quality scoring API attempt %d/%d failed: %s",
-                                   attempt + 1, self.max_retries, response.message)
+                                   attempt + 1, self.max_retries, last_err)
                     if attempt < self.max_retries - 1:
                         time.sleep(2 ** attempt)
                         continue
-                    return QualityScore(passed=False, error=response.message)
+                    return QualityScore(passed=False, error=last_err)
 
                 content = response.output.choices[0].message.content
                 result = self._parse_response(content)
@@ -125,14 +158,16 @@ class QualityScorer:
                 if attempt < self.max_retries - 1:
                     time.sleep(2 ** attempt)
             except Exception as e:
+                last_err = str(e)[:160]
                 logger.warning("Quality scoring attempt %d/%d error: %s",
                                attempt + 1, self.max_retries, e)
                 if attempt < self.max_retries - 1:
                     time.sleep(2 ** attempt)
                 else:
-                    return QualityScore(passed=False, error=str(e))
+                    return QualityScore(passed=False, error=last_err)
 
-        return QualityScore(passed=False, error="Max retries exceeded")
+        return QualityScore(passed=False,
+                            error=f"Max retries exceeded{': ' + last_err if last_err else ''}")
 
     def _parse_response(self, content: str) -> Optional[QualityScore]:
         """解析LLM返回的JSON评分"""

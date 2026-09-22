@@ -155,6 +155,18 @@ class HtmlReaderTest(unittest.TestCase):
         self.assertNotIn("var a=1", result.text)
         self.assertEqual(result.metadata["title"], "标题")
 
+    def test_inline_links_do_not_fragment_paragraph(self):
+        """历史缺陷：行内 <a> 文本被当作独立段落，句子被切碎成三段"""
+        path = self._write("links.html", """
+        <html><body><p>本文是<a href="/x">中国内地法律法规</a>。</p>
+        <p>另一句包含<strong>强调词</strong>与<a href="/y">链接词</a>的正文。</p>
+        </body></html>""")
+        result = HTMLReader().read(path)
+        self.assertTrue(result.success, result.error)
+        self.assertIn("本文是中国内地法律法规。", result.text)
+        self.assertNotIn("本文是\n\n", result.text)
+        self.assertIn("另一句包含强调词与链接词的正文。", result.text)
+
     def test_screenshot_html_is_detected(self):
         images = "".join(
             f'<img src="data:image/png;base64,AAAA{i}">' for i in range(6))

@@ -9,6 +9,7 @@ import os
 import re
 import logging
 from bs4 import BeautifulSoup, NavigableString
+from bs4.element import Comment, CData, Doctype, ProcessingInstruction
 
 from .base import BaseReader, ReaderResult
 
@@ -52,43 +53,98 @@ class HTMLReader(BaseReader):
 
         return score_screenshot > score_source and score_screenshot >= 2
 
+    _HEADINGS = ('h1', 'h2', 'h3', 'h4', 'h5', 'h6')
+    _BLOCK_START = {'p', 'div', 'li', 'td', 'th', 'section', 'article', 'main',
+                    'blockquote', 'dd', 'dt', 'pre', 'figcaption', 'center'}
+
     def _extract_source_html(self, soup: BeautifulSoup) -> str:
-        """从源码HTML中提取语义化文本"""
+        """从源码HTML中提取语义化文本
+
+        关键设计：按 块级/行内 区分——行内节点（a/span/strong…）的文本
+        累积进当前段落缓冲，块级节点（p/li/td/div…）开始新段落。
+        旧实现对每个文本节点直接 "\n\n".join，导致含链接的句子被切碎成
+        "本文是 / 中国内地法律法规 / 。" 三段，结构与可读性全毁。
+        """
         # 移除噪声元素
         for tag in soup.find_all(['script', 'style', 'noscript', 'iframe',
                                   'svg', 'nav', 'footer', 'header',
                                   'aside', 'form', 'button', 'select']):
             tag.decompose()
 
-        # 提取文本块
-        text_parts = []
+        # MediaWiki 皮肤容器（wikisource Vector 皮肤源码实测定位）：
+        # 跳转链接、站点通知/横幅、许可证模板元数据、下载工具项、
+        # 分类框、页脚、编辑小节、侧栏与吸顶栏等
+        for sel in ('.mw-jump-link', '#mw-aria-live-region', '#siteSub',
+                    '.mw-dismissable-notice', '#siteNotice', '#localNotice',
+                    '.anonnotice', 'div.printfooter', '#catlinks', '.catlinks',
+                    '.licensetpl', '.licensetpl_header', 'li.noprint',
+                    'li.mw-list-item', '.mw-editsection', '#p-lang',
+                    '.vector-user-links', '.vector-sticky-header',
+                    'div.vector-header-container', 'table.metadata',
+                    '.mw-authority-control', '#section-description'):
+            try:
+                for tag in soup.select(sel):
+                    tag.decompose()
+            except Exception:
+                pass  # 非标准皮肤下选择器失效不影响主流程
+
+        # <head> 整体移除（title 已由 read() 先行提取），
+        # 注释/CDATA 等 NavigableString 子类不是正文
+        # （wikisource 页面尾部的 parser-cache 注释含 "Rendering was triggered" 噪声）
+        for head in soup.find_all('head'):
+            head.decompose()
+        for node in soup.find_all(string=lambda s: isinstance(s, (Comment, CData, Doctype, ProcessingInstruction))):
+            node.extract()
+
+        text_parts: list = []
+        buf: list = []
+        current_block = None
+
+        def flush():
+            if not buf:
+                return
+            para = re.sub(r'\s+', ' ', ' '.join(buf)).strip()
+            # CJK 相邻片段之间的连接空格去掉（中英混排保留）
+            para = re.sub(r'(?<=[\u4e00-\u9fff。，、；：？！）》」』】])'
+                          r'\s+(?=[\u4e00-\u9fff（《「『【])', '', para)
+            # 中文标点回贴：'法律法规 。' → '法律法规。'
+            para = re.sub(r'\s+([，。；：、！？）》」』%])', r'\1', para)
+            para = re.sub(r'([（《「『])\s+', r'\1', para)
+            if para and para.strip('-•·—'):
+                text_parts.append(para)
+            buf.clear()
 
         for element in soup.descendants:
-            if isinstance(element, NavigableString):
-                parent = element.parent
-                if parent and parent.name:
-                    text = element.strip()
-                    if not text:
-                        continue
-                    tag = parent.name
+            if not isinstance(element, NavigableString):
+                continue
+            text = element.strip()
+            if not text:
+                continue
+            parent = element.parent
+            tag = parent.name if parent is not None else None
 
-                    if tag in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
-                        level = tag[1]
-                        text_parts.append("#" * int(level) + " " + text)
-                    elif tag == 'li':
-                        text_parts.append("- " + text)
-                    elif tag in ['td', 'th']:
-                        text_parts.append(text)
-                    elif tag == 'p':
-                        text_parts.append(text)
-                    elif tag == 'br':
-                        text_parts.append("\n")
-                    elif tag in ['div', 'span', 'a', 'strong', 'em', 'b', 'i', 'u']:
-                        text_parts.append(text)
+            if tag in self._HEADINGS:
+                flush()
+                current_block = None
+                text_parts.append("#" * int(tag[1]) + " " + text)
+            elif tag == 'li':
+                if current_block is not parent:
+                    flush()
+                    current_block = parent
+                    buf.append('-')
+                buf.append(text)
+            elif tag is None or tag in self._BLOCK_START or tag in ('br',):
+                if current_block is not parent:
+                    flush()
+                    current_block = parent
+                buf.append(text)
+            else:
+                # 行内元素（a/span/strong/em/b/i/u/small…）及未知标签：
+                # 并入当前段落，不产生段落边界
+                buf.append(text)
+        flush()
 
         full_text = "\n\n".join(text_parts)
-
-        # 清理多余空行
         full_text = re.sub(r'\n{3,}', '\n\n', full_text)
         return full_text.strip()
 
@@ -145,6 +201,10 @@ class HTMLReader(BaseReader):
             soup = BeautifulSoup(html_content, 'lxml')
             is_screenshot = self._is_screenshot_html(soup)
 
+            # 标题先提取：_extract_source_html 会移除整个 <head>
+            title_tag = soup.find('title')
+            title = title_tag.get_text(strip=True) if title_tag else ""
+
             if is_screenshot:
                 text = self._extract_screenshot_html(soup)
                 file_type = "html_screenshot"
@@ -153,10 +213,6 @@ class HTMLReader(BaseReader):
                 text = self._extract_source_html(soup)
                 file_type = "html_source"
                 logger.info("Detected source HTML: %s", os.path.basename(filepath))
-
-            # 提取标题
-            title_tag = soup.find('title')
-            title = title_tag.get_text(strip=True) if title_tag else ""
 
             return ReaderResult(
                 text=text,
