@@ -23,7 +23,8 @@
 
 ```
 LLM_Data_Test/
-├── file_processor/                  # 核心处理包（32 个 py，约 3.2k 行）
+├── file_processor/                  # 核心处理包（32 个 py / 约 3.5k 行，结构见图后导航）
+│   ├── README.md                    # ★ 包内总览：数据流、依赖表、根文件逐个说明
 │   ├── main.py                      # CLI 入口
 │   ├── pipeline.py                  # 管道编排：扫描→读取→清洗→质检→转换→输出
 │   ├── config.py                    # 全局配置（dataclass + JSON 覆盖）
@@ -31,12 +32,12 @@ LLM_Data_Test/
 │   ├── quality_scorer.py            # qwen-plus 多维度质量评分（并发）
 │   ├── run_config.json              # 运行配置：可提取文本的 250 个文件
 │   ├── run_config_ocr.json          # 运行配置：需 OCR 的 150 个文件
-│   ├── readers/                     # pdf / word / html / txt / qwen-vl ocr
-│   ├── cleaners/                    # text_cleaner / html_cleaner / quality_filter
-│   ├── converters/                  # pretrain / instruction / cot
-│   ├── formatters/jsonl_formatter.py# 输出布局 + 重建/续跑/元数据
-│   ├── llm/                         # 可选：openai / dashscope 生成器
-│   └── utils/                       # lang_detect / dedup / stats / cache
+│   ├── readers/                     # pdf / word / html / txt / qwen-vl ocr（各有 README）
+│   ├── cleaners/                    # text_cleaner / html_cleaner / quality_filter（README）
+│   ├── converters/                  # pretrain / instruction / cot（README：含 input 契约）
+│   ├── formatters/jsonl_formatter.py# 输出布局 + 重建/续跑/元数据（README）
+│   ├── llm/                         # 可选：openai / dashscope 生成器（README）
+│   └── utils/                       # lang_detect / dedup / stats / cache（README）
 ├── data/                            # 原始数据 + 数据构建工具链（详见 data/README.md）
 │   ├── 文本pdf/                     50 篇英文论文 PDF（文字层）
 │   ├── 文本pdf中文版/                50 篇中文论文 PDF（文字层）
@@ -59,6 +60,20 @@ LLM_Data_Test/
 ├── requirements.txt
 └── README.md
 ```
+
+### 模块实现细节导航
+
+想看清"某一步具体怎么实现"，按层进对应 README（含判定顺序、阈值标定依据、踩坑记录）：
+
+| 文档 | 回答的问题 |
+|------|-----------|
+| [`file_processor/README.md`](file_processor/README.md) | 一次运行经过哪些代码？谁 import 谁？成本闸门怎么排？ |
+| [`readers/README.md`](file_processor/readers/README.md) | 扫描 PDF 怎么判定并 OCR？HTML 两种形态怎么分流？ |
+| [`cleaners/README.md`](file_processor/cleaners/README.md) | 9 步清洗每步防什么？空表单熔断规则怎么标定到零误伤？ |
+| [`converters/README.md`](file_processor/converters/README.md) | 三种样本各怎么提取？**input 什么时候必须给材料**？各种守卫拦掉了什么噪声？ |
+| [`formatters/README.md`](file_processor/formatters/README.md) | 重建/续跑语义、样本级指纹去重、metadata 累计口径 |
+| [`llm/README.md`](file_processor/llm/README.md) | 可选生成路径；为什么质检/OCR 不走它 |
+| [`utils/README.md`](file_processor/utils/README.md) | SimHash 为何必须 bigram+blake2b？缓存键为何含 mtime？ |
 
 ---
 
@@ -110,9 +125,10 @@ python check_progress.py
                                    ▼
                      清洗（控制字符 / 空白 / 断行 / 乱码行 / 标点）
                                    ▼
-                     启发式质量过滤（长度 / 信息密度 / 乱码 / SimHash 去重）
+                     启发式质量过滤（长度 / 信息密度 / 乱码 / 空表单熔断 / SimHash 去重）
                                    ▼
-                     LLM 质量评分（qwen-plus，并发，单项≥3 且总分≥20/25）
+                     LLM 质量评分（qwen-plus，并发，单项≥3 且总分≥18：阈值为运营参数，代码默认 20、
+                      run_config 实测调至 18，依据见「实测规模」一节）
                                    ▼
         ┌──────────────────────────┼──────────────────────────┐
         ▼                          ▼                          ▼

@@ -4,7 +4,6 @@ HTML 特定清洗器
 """
 
 import re
-from bs4 import BeautifulSoup
 from typing import Optional
 
 
