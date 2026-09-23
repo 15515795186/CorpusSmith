@@ -23,7 +23,7 @@
 
 ```
 LLM_Data_Test/
-├── file_processor/                  # 核心处理包（32 个 py / 约 3.5k 行，结构见图后导航）
+├── file_processor/                  # 核心处理包（32 个 py / 4268 行，结构见图后导航）
 │   ├── README.md                    # ★ 包内总览：数据流、依赖表、根文件逐个说明
 │   ├── main.py                      # CLI 入口
 │   ├── pipeline.py                  # 管道编排：扫描→读取→清洗→质检→转换→输出

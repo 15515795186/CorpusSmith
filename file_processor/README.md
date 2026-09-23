@@ -1,6 +1,6 @@
 # file_processor/ — 核心包
 
-3504 行 / 32 个 py。六层流水线 + 根目录五个编排文件。
+32 个 py / 4268 行（含注释与空行，逐文件实测）。六层流水线 + 根目录五个编排文件。
 各子目录另有 README（readers / cleaners / converters / formatters / llm / utils），
 本文件讲**包根文件**与**整条数据流**。
 
