@@ -18,6 +18,8 @@ LLM 数据集处理工作流入口
 
   # 指定具体文件 / 只输出部分数据集
   python -m file_processor.main --files doc1.pdf,doc2.docx --output-types pretrain
+  # 指定具体文件 / 指定输出路径(demo_out) / 指定并发数量(2)
+  python -m file_processor.main --files doc1.pdf,doc2.docx --output-dir demo_out --max-workers 2
 """
 
 import argparse

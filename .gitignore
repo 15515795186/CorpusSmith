@@ -17,7 +17,7 @@ datasets/
 .cache/
 ocr_temp/
 output/
-demo_out/
+demo_out*/
 *.log
 
 # ---- 测试 ----
