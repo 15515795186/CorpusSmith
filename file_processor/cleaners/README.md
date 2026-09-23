@@ -39,6 +39,10 @@ pipeline._quality_check() 之前:
 
 ## html_cleaner.py — 结构收尾
 
+> ⚠️ 命名易误解：本模块**不解析 HTML、也不用 BeautifulSoup**
+> （bs4 解析在 `readers/html_reader.py`）。它处理的是提取完的纯文本。
+> 曾有一行从未使用的 `from bs4 import BeautifulSoup` 死导入，已清理。
+
 - 残标签正则剥离（`<[^>]+>`、`[TABLE]` 标记）；
 - 表格：删纯分隔线行 `|---|---|`，单元格压缩为 `A | B | C`；
 - 标题：`##text` 修成 `## text`（转换器依赖 `^#{1,3} ` 匹配标题，缺空格会导致结构提取失败）；

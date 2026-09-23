@@ -1,6 +1,9 @@
 """
-HTML 特定清洗器
-对HTML提取后的文本做结构化解构
+HTML 提取后文本清洗器（注意：不解析 HTML！）
+
+输入是 readers/html_reader.py（BeautifulSoup）提取出的纯文本，
+本模块只用正则做结构化收尾：残标签剥离、表格线清理、标题空格修复、列表空行压缩。
+BeautifulSoup 解析发生在读取层，不在这里。
 """
 
 import re
