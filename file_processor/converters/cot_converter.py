@@ -123,6 +123,91 @@ class COTConverter:
                 if len(samples) >= 10:
                     return samples
 
+        # 中文顿号/括号编号（一、… / （一）…）的清点通道。
+        # 只产"条目清点"不产"流程逐步"：中文编号多为并行宣告（白皮书小节体），
+        # 无时序证据时对它讲"完整流程"就是语义错配；但"数数"对任何清单成立。
+        # 守卫回填自 instruction 列举通道（实测 578 条零误报的那套），并严一档
+        # （中位长≥12）：中文编号更易被用作章节短标题（"一、历史背景"）。
+        if len(samples) < 10:
+            samples.extend(self._cn_numbered_inventory(text, source))
+        return samples
+
+    @staticmethod
+    def _cn_value(s: str):
+        """中文序数词 → int（一..九、十、十一..十九、二十、二十一..九十九）"""
+        d = {'一': 1, '二': 2, '三': 3, '四': 4, '五': 5,
+             '六': 6, '七': 7, '八': 8, '九': 9}
+        if s in d:
+            return d[s]
+        if s == '十':
+            return 10
+        m = re.fullmatch(r'十([一二三四五六七八九])', s)
+        if m:
+            return 10 + d[m.group(1)]
+        m = re.fullmatch(r'([一二九])十([一二三四五六七八九])?', s)
+        if m:
+            return d[m.group(1)] * 10 + (d[m.group(2)] if m.group(2) else 0)
+        return None
+
+    @staticmethod
+    def _cn_clean_run(cand):
+        """中文编号序列校验：+1 递增切段取最长段；条数 2~12；描述中位长 ≥12"""
+        if not cand:
+            return None
+        runs, cur = [], [cand[0]]
+        for prev, nxt in zip(cand, cand[1:]):
+            pv = COTConverter._cn_value(prev[0])
+            nv = COTConverter._cn_value(nxt[0])
+            if pv is not None and nv == pv + 1:
+                cur.append(nxt)
+            else:
+                runs.append(cur)
+                cur = [nxt]
+        runs.append(cur)
+        steps = max(runs, key=len)
+        if not (2 <= len(steps) <= 12):
+            return None
+        descs = [d.strip() for _, d in steps]
+        lens = sorted(len(d) for d in descs)
+        if lens[len(lens) // 2] < 12:
+            return None
+        return steps
+
+    def _cn_numbered_inventory(self, text: str, source: str) -> List[Dict]:
+        samples = []
+        pats = [
+            r'(?:^|\n)\s*([一二三四五六七八九十]{1,3})、\s*(.+?)(?=\n\s*[一二三四五六七八九十]{1,3}、|\n\n|\Z)',
+            r'(?:^|\n)\s*[（(]([一二三四五六七八九十]{1,3})[）)]\s*(.+?)(?=\n\s*[（(][一二三四五六七八九十]{1,3}[）)]|\n\n|\Z)',
+        ]
+        for pat in pats:
+            cand = re.findall(pat, text, re.DOTALL)
+            steps = self._cn_clean_run(cand)
+            if not steps:
+                continue
+            kept, used = [], 0
+            for num, desc in steps:
+                line = f"{num}、{re.sub(r'\s+', ' ', desc.strip())}"
+                if used + len(line) + 1 > 1500:
+                    break
+                kept.append(line)
+                used += len(line) + 1
+            if len(kept) < 2:
+                continue
+            topic = self._find_step_context(text, (steps[0][1] or "")[:20])
+            if len(topic) > 50:
+                topic = topic[:50] + "..."
+            topic = f"「{topic}」" if topic else ""
+            cot_steps = "\n".join(kept)
+            samples.append({
+                "instruction": f"根据以下材料，清点{topic}总共列出了几个条目？请逐条核对。" if topic else
+                               "根据以下材料，清点其中总共列出了几个条目？请逐条核对。",
+                "input": cot_steps,
+                "chain_of_thought": f"逐条清点材料：\n{cot_steps}\n核对编号后共{len(kept)}个条目。",
+                "output": f"{topic}共列出{len(kept)}个条目。" if topic else f"材料共列出{len(kept)}个条目。",
+                "source": source,
+            })
+            if len(samples) >= 2:  # 顿号/括号两种风格各最多一条，防单文档挤占
+                break
         return samples
 
     _SECTION_WORDS = re.compile(
@@ -177,38 +262,63 @@ class COTConverter:
         samples = []
         source = os.path.basename(result.filepath)
 
-        # 匹配"因为...所以...", "如果...那么...", "首先...其次...最后..."
+        # 因果/条件句式提取。同句约束保留（开卷契约：推理两端与连接词必须在同一
+        # 句内——跨句时中间论证链断裂，题面无法自包含），但关联词对从最初仅 3 组
+        # 扩到常见书面组：由于…因此、只有…才 等此前都是被白白丢弃的真实推理结构。
         patterns = [
             (r'因为(.+?)，所以(.+?)[。.]', "因果关系推理"),
+            (r'因为(.+?)，因此(.+?)[。.]', "因果关系推理"),
+            (r'由于(.+?)，(?:所以|因此)(.+?)[。.]', "因果关系推理"),
+            (r'既然(.+?)，(?:那么|就|则)(.+?)[。.]', "因果推理"),
             (r'如果(.+?)，(?:那么|就|则)(.+?)[。.]', "条件推理"),
+            (r'只要(.+?)，(?:那么|就|则)(.+?)[。.]', "条件推理"),
+            (r'只有(.+?)，(?:才能|才)(.+?)[。.]', "条件推理"),
             (r'首先[,，](.+?)[,，]其次[,，](.+?)[,，]最后[,，](.+?)[。.]', "三步推理"),
         ]
+        # 自包含守卫：前提/结论不得含句末标点或分号（防贪婪配对吞并下一环推理链）、
+        # 不得含引号（防把转述句嵌套切出来）、长度上下限；前提不得以指代词或
+        # 第一/二人称引导句开头（"这/该…"悬空指代、"我们看一看…"是叙事邀请不是事实前提）
+        _bad = re.compile(r'[。！？!?；;“”‘’「」"\']')
+        _anaphora = re.compile(r'^(这|那|该|此|其|他|她|它|并|也|而且|但|而|所以|因此|可见|总之'
+                               r'|我们|我|你|您|大家|请|试|请问)')
+        seen = set()
 
         for pattern, logic_type in patterns:
             for m in re.finditer(pattern, text):
                 groups = m.groups()
+                if m.group(0) in seen:
+                    continue
                 if len(groups) == 2:
+                    # 配对可能把句首从句逗号留在组边缘，先剥再校验
+                    premise, conclusion = (re.sub(r'^[，,、；;：:\s]+', '', g.strip()) for g in groups)
+                    if not (8 <= len(premise) <= 120 and 8 <= len(conclusion) <= 150):
+                        continue
+                    if _bad.search(premise) or _bad.search(conclusion) or _anaphora.match(premise):
+                        continue
                     # 因果/条件类：已知条件已写进题面 → 题目自包含，input 空合规
-                    premise, conclusion = groups
+                    seen.add(m.group(0))
                     samples.append({
                         "instruction": f"根据已知信息，分析{premise}会得出什么结论？请给出推理过程。",
                         "input": "",
-                        "chain_of_thought": f"推理过程：\n1. 已知条件：{premise.strip()}\n"
+                        "chain_of_thought": f"推理过程：\n1. 已知条件：{premise}\n"
                                               f"2. 逻辑分析：根据{logic_type}原则\n"
-                                              f"3. 推理结论：{conclusion.strip()}",
-                        "output": conclusion.strip(),
+                                              f"3. 推理结论：{conclusion}",
+                        "output": conclusion,
                         "source": source,
                     })
                 elif len(groups) == 3:
+                    first, second, third = (g.strip() for g in groups)
+                    if any(_bad.search(g) for g in (first, second, third)):
+                        continue
+                    seen.add(m.group(0))
                     # 旧题面"请逐步分析完整过程"没有对象；现在原句进 input，题面自包含
-                    first, second, third = groups
                     samples.append({
                         "instruction": "根据以下材料，按顺序逐步分析其完整过程。",
                         "input": m.group(0)[:600].strip(),
-                        "chain_of_thought": f"第一步骤：{first.strip()}\n"
-                                              f"第二步骤：{second.strip()}\n"
-                                              f"第三步骤：{third.strip()}",
-                        "output": third.strip(),
+                        "chain_of_thought": f"第一步骤：{first}\n"
+                                              f"第二步骤：{second}\n"
+                                              f"第三步骤：{third}",
+                        "output": third,
                         "source": source,
                     })
 

@@ -1,3 +1,4 @@
+import re
 import unittest
 
 from file_processor.converters.pretrain_converter import PretrainConverter
@@ -178,6 +179,83 @@ class COTGroundingTest(unittest.TestCase):
         self.assertTrue(three)
         for s in three:
             self.assertIn("首先", s["input"], "题面不得依赖看不见的原文")
+
+
+class COTRecallExpansionTest(unittest.TestCase):
+    """中文编号清点通道 + 因果关联词扩集：新增召回必须不破坏开卷契约"""
+
+    WHITEPAPER = (
+        "中国对非援助政策宣示\n\n"
+        "一、扩大对非援助规模，到2009年使中国对非洲国家的援助规模比2006年增加一倍。\n"
+        "二、三年内面向非洲国家提供三百亿美元的优惠贷款和二十亿美元的优惠出口买方信贷。\n"
+        "三、为鼓励和支持中国企业到非洲投资，设立中非发展基金，基金总额逐步达到五十亿美元。\n"
+    )
+
+    def test_cn_numbered_block_yields_inventory_only(self):
+        samples = COTConverter().convert(make_result(self.WHITEPAPER))
+        inv = [s for s in samples if "清点" in s["instruction"]]
+        self.assertEqual(len(inv), 1, "中文编号块应产出恰一条清点样本")
+        self.assertIn("一、扩大对非援助规模", inv[0]["input"], "材料必须进 input（开卷）")
+        self.assertIn("三、为鼓励和支持", inv[0]["input"])
+        self.assertNotIn("完整流程", "".join(s["instruction"] for s in samples),
+                         "无时序证据的中文编号（并行宣告）不得产流程样本")
+
+    def test_cn_toc_short_titles_rejected(self):
+        doc = "报告目录\n\n一、概述\n二、方法\n三、结果\n四、结论\n"
+        samples = COTConverter().convert(make_result(doc))
+        self.assertEqual([s for s in samples if "清点" in s["instruction"]], [],
+                         "短标题目录不得生成清点样本（中位长≥12守卫）")
+
+    def test_cn_count_matches_visible_material(self):
+        # 12 条 × ~140 字 > 1500 预算：计数答案必须等于截断后材料里可见的条目数
+        cn = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十', '十一', '十二']
+        body = "\n".join(f"{c}、推进{p}领域的制度建设，形成配套措施并组织实施保障方案，确保落地见效。{'补充说明文字' * 25}"
+                         for c, p in zip(cn, ['经济', '社会', '文化', '生态', '教育', '科技',
+                                              '民生', '卫生', '住房', '就业', '安全', '法治']))
+        samples = COTConverter().convert(make_result(body + "\n"))
+        inv = [s for s in samples if "清点" in s["instruction"]]
+        self.assertEqual(len(inv), 1)
+        visible = sum(1 for ln in inv[0]["input"].split("\n")
+                      if re.match(r'^[一二三四五六七八九十]{1,3}、', ln))
+        claimed = int(re.search(r'列出(\d+)个条目', inv[0]["output"]).group(1))
+        self.assertEqual(claimed, visible, "计数不得引用材料里看不到的条目")
+
+    def test_paren_style_inventory(self):
+        doc = ("（一）第一阶段的目标是基本完成主要制度的框架设计工作。\n"
+               "（二）第二阶段重点推进试点地区的实施与评估反馈机制。\n"
+               "（三）第三阶段总结推广成熟经验并建立长效运行保障体系。\n")
+        samples = COTConverter().convert(make_result(doc))
+        inv = [s for s in samples if "清点" in s["instruction"]]
+        self.assertEqual(len(inv), 1)
+        self.assertIn("三、第三阶段", inv[0]["input"], "括号编号归一为顿号样式入材料")
+        self.assertIn("一、第一阶段", inv[0]["input"])
+
+    def test_causal_narrative_and_swallow_rejected(self):
+        doc = ("由于有人提出“我们看一看地图”的建议，因此会场短暂安静了下来。\n"
+               "因为我们坚持了基本原则，所以会议取得了超出预期的阶段性成果；由于双方互谅互让，"
+               "因此会谈最终签署了联合公报。\n")
+        samples = COTConverter().convert(make_result(doc))
+        causal = [s for s in samples if s["instruction"].startswith("根据已知信息")]
+        self.assertEqual(causal, [], "引号嵌套（转述）与分号并环（多段推理链）不得切片成样本")
+
+    def test_new_causal_connectives_accepted(self):
+        doc = ("由于历史原因形成的两岸分离状态尚未消除，因此实现统一需要兼顾现实与法理两个维度。\n"
+               "只有坚持一个中国原则的基础不动摇，才能为两岸协商创造必要的政治前提条件。\n")
+        samples = COTConverter().convert(make_result(doc))
+        causal = [s for s in samples if s["instruction"].startswith("根据已知信息")]
+        self.assertEqual(len(causal), 2, "由于…因此 / 只有…才能 都应被识别")
+        for s in causal:
+            self.assertEqual(s["input"], "", "题面自包含（条件已写入），留空合规")
+        self.assertTrue(any("才能" in s["output"] or s["output"].startswith("为两岸")
+                            for s in causal), "只有…才能 的结论不得残留'能'字错切")
+
+    def test_causal_anaphora_and_cross_sentence_rejected(self):
+        doc = ("因为这家长期坚持高研发投入的科技型企业，所以获得了资本市场的持续关注。\n"
+               "因为外部市场需求趋于饱和，库存持续积压。产业政策收紧，所以企业必须加快转型。\n")
+        samples = COTConverter().convert(make_result(doc))
+        causal = [s for s in samples if s["instruction"].startswith("根据已知信息")]
+        self.assertEqual(causal, [],
+                         "指代词开头的前提（悬空）与含句号的跨句贪婪配对都必须拒绝")
 
 
 class NumberedListSampleTest(unittest.TestCase):
