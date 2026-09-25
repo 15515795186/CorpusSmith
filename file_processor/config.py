@@ -51,22 +51,37 @@ class ProcessorConfig:
 
     # ========== LLM 生成（可选）==========
     enable_llm: bool = False
-    llm_provider: str = "openai"
-    openai_api_key: str = ""
-    openai_base_url: str = ""
-    openai_model: str = "gpt-4o-mini"
+    llm_provider: str = "dashscope"
     dashscope_api_key: str = ""
-    dashscope_model: str = "qwen-max"
+    dashscope_model: str = "qwen3.5-plus"  # 百炼生成默认模型(qwen-max 需单独开通权限, plus 实测可用); 推理链可用 deepseek-r1
+    llm_cot_model: str = ""                # COT 转换器专用模型; 留空则与主模型共用。例如 "deepseek-r1"(推理链强)
+    llm_cot_max_tokens: int = 0            # COT 专用输出上限; 0 = 跟随 llm_max_tokens(deepseek-r1 思考链偏长, 建议 3000-4000)
+    llm_max_attempts: int = 3              # 拒绝采样(失败重试制): LLM 生成后硬校验不过则重试的上限; 1=不重试
     llm_batch_size: int = 5
     llm_max_concurrency: int = 3
     llm_temperature: float = 0.3
     llm_max_tokens: int = 2048
+
+    # ========== 样本级校验(转换后,从严) ==========
+    cot_distribution_enforce: bool = True     # COT 四类分布硬门禁: 超配裁剪 + 欠配告警
+    cot_distribution_tolerance: float = 0.05  # 分布偏差容忍(《数据集介绍.md》4.5 ±5%)
+    sample_check_ratio: float = 0.1           # 转换后 LLM 语义抽检比例(0=关闭; 抽检幻觉/跳步/类别匹配)
+    verify_code_exec: bool = False            # 代码题运行验证(有安全门槛, 默认关)
+    review_output: str = ""                   # 争议/未决样本导出路径(JSONL, 供人工双人审核); 空=仅记日志
 
     # ========== LLM 质量评分 ==========
     quality_enabled: bool = True
     quality_model: str = "qwen-plus"
     quality_min_per_dimension: int = 3
     quality_min_total: int = 20
+
+    # ========== 困惑度过滤(免费预筛闸, 可选) ==========
+    # 位置: 启发式过滤之后、LLM 质量评分之前。PPL 高 = 语言不自然(机器翻译腔/OCR噪声), 淘汰 ppl > 阈值
+    enable_ppl_filter: bool = True       # 已开闸: 阈值由 80 份爬取语料实跑标定(留档见 data/_pipeline/PPL扫码留档.md)
+    ppl_model: str = "Qwen/Qwen2.5-0.5B" # 本地小 LM, 从 HUGGINGFACE_HUB_CACHE 缓存加载
+    ppl_threshold: float = 16.21         # 全量 80 份(清洗口径统一后)的 p95: 淘汰 >16.21 共 4 份(2 份 Gutenberg 封面页 + word_05 政务清单 + zh_pdf_06 油气规划); 0 = 扫码模式(只统计不淘汰)
+    ppl_quantile: float = 0.95           # 扫码模式自动定标分位数, 与上阈值同源(ceil 口径)
+    ppl_cache_dir: str = "D:/model"      # PPL 模型缓存根(与 data/_pipeline/scan_ppl_distribution.py 同源); 留空 = 跟随 HUGGINGFACE_HUB_CACHE/默认缓存
 
     # ========== 并发 ==========
     max_workers: int = 4

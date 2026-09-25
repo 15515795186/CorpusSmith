@@ -29,6 +29,7 @@ from .readers.ocr_reader import QwenVLOcrReader
 from .cleaners.text_cleaner import TextCleaner
 from .cleaners.html_cleaner import HTMLCleaner
 from .cleaners.quality_filter import QualityFilter
+from .cleaners.ppl_filter import PPLFilter
 from .converters.pretrain_converter import PretrainConverter
 from .converters.instruction_converter import InstructionConverter
 from .converters.cot_converter import COTConverter
@@ -106,8 +107,19 @@ class FileProcessorPipeline:
             max_repeat_char_ratio=config.max_repeat_char_ratio,
         )
 
-        # LLM生成器（可选）
+        # 困惑度过滤器(免费预筛闸): 默认不启用; enable_ppl_filter 时延迟加载本地小 LM
+        self.ppl_filter = None
+        if config.enable_ppl_filter:
+            self.ppl_filter = PPLFilter(
+                model_name=config.ppl_model,
+                threshold=config.ppl_threshold or None,
+                quantile=config.ppl_quantile,
+                cache_dir=config.ppl_cache_dir or None,
+            )
+
+        # LLM生成器（可选）；COT 转换器可用 llm_cot_model 指定专用模型
         self.llm_generator = self._init_llm_generator()
+        self.cot_llm_generator = self._init_cot_llm_generator(self.llm_generator)
 
         # 转换器
         self.pretrain_converter = PretrainConverter(
@@ -118,10 +130,20 @@ class FileProcessorPipeline:
         self.instruction_converter = InstructionConverter(
             max_samples=config.max_samples.get("instruction", 0),
             llm_generator=self.llm_generator if config.enable_llm else None,
+            sample_check_ratio=config.sample_check_ratio,
+            review_output=config.review_output,
+            verify_code_exec=config.verify_code_exec,
+            llm_max_attempts=config.llm_max_attempts,
         )
         self.cot_converter = COTConverter(
             max_samples=config.max_samples.get("cot", 0),
-            llm_generator=self.llm_generator if config.enable_llm else None,
+            llm_generator=self.cot_llm_generator if config.enable_llm else None,
+            sample_check_ratio=config.sample_check_ratio,
+            distribution_enforce=config.cot_distribution_enforce,
+            distribution_tolerance=config.cot_distribution_tolerance,
+            review_output=config.review_output,
+            verify_code_exec=config.verify_code_exec,
+            llm_max_attempts=config.llm_max_attempts,
         )
 
         # 输出（resume 时不截断，否则每次运行重建，避免重复样本堆积）
@@ -151,16 +173,9 @@ class FileProcessorPipeline:
         """初始化LLM生成器"""
         if not self.config.enable_llm:
             return None
-
         if self.config.llm_provider == "openai":
-            from .llm.openai_generator import OpenAIGenerator
-            return OpenAIGenerator(
-                api_key=self.config.openai_api_key,
-                base_url=self.config.openai_base_url,
-                model=self.config.openai_model,
-                temperature=self.config.llm_temperature,
-                max_tokens=self.config.llm_max_tokens,
-            )
+            raise ValueError("llm_provider 'openai' 已移除, 仅支持 'dashscope'")
+
         if self.config.llm_provider == "dashscope":
             from .llm.dashscope_generator import DashScopeGenerator
             return DashScopeGenerator(
@@ -171,6 +186,24 @@ class FileProcessorPipeline:
             )
         logger.warning("Unknown LLM provider: %s", self.config.llm_provider)
         return None
+
+    def _init_cot_llm_generator(self, base_generator):
+        """COT 转换器专用生成器：llm_cot_model 指定时用该模型实例，否则与 instruction 共用 base_generator"""
+        if not self.config.enable_llm or not self.config.llm_cot_model:
+            return base_generator
+        if self.config.llm_provider == "openai":
+            raise ValueError("llm_provider 'openai' 已移除, 仅支持 'dashscope'")
+
+        if self.config.llm_provider == "dashscope":
+            from .llm.dashscope_generator import DashScopeGenerator
+            return DashScopeGenerator(
+                api_key=self.config.api_key(),
+                model=self.config.llm_cot_model,
+                temperature=self.config.llm_temperature,
+                max_tokens=self.config.llm_cot_max_tokens or self.config.llm_max_tokens,
+            )
+        logger.warning("Unknown LLM provider: %s", self.config.llm_provider)
+        return base_generator
 
     # ================= 主流程 =================
     def run(self):
@@ -231,6 +264,10 @@ class FileProcessorPipeline:
                          ncols=70, bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}]")
             cleaned_results = self._clean_all(results, pbar2)
             pbar2.close()
+
+            # 4.5 困惑度过滤（免费预筛，启用时）
+            if self.ppl_filter is not None:
+                cleaned_results = self._ppl_check(cleaned_results)
 
             # 5. 质量评分 + 过滤（启用时）
             if self.quality_scorer is not None:
@@ -404,6 +441,46 @@ class FileProcessorPipeline:
             top = ", ".join(f"{r}={c}" for r, c in self.rejections.most_common(5))
             logger.info("[Clean] 丢弃原因 TOP5: %s", top)
         return cleaned
+
+    # ================= 困惑度过滤 =================
+    def _ppl_check(self, results: List[ReaderResult]) -> List[ReaderResult]:
+        """困惑度过滤: 免费的本地预筛闸, 只保留 ppl <= 阈值的文档。
+        扫码模式(threshold=None)全部通过, 只收集分数供标定。"""
+        if not results:
+            return []
+        ppl_filter = self.ppl_filter
+        assert ppl_filter is not None
+        from tqdm import tqdm
+        passed = []
+        pbar = tqdm(total=len(results), desc="[PPL] 困惑度过滤", unit="text",
+                    ncols=70, bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}]")
+        for r in results:
+            try:
+                out = ppl_filter.check(r.text)
+            except Exception as exc:  # noqa: BLE001
+                # 单条打分异常(偶发 OOM/超长文本等)不判死: 语言自然度拿不准就放行,
+                # 但必须告警 + 计数, 供人工复查(见 run_report.ppl_filter.score_errors)
+                logger.warning("[PPL] 打分异常, 放行不淘汰: %s (%s)",
+                               os.path.basename(r.filepath), exc)
+                self.stats.ppl_errors += 1
+                passed.append(r)
+                pbar.update(1)
+                continue
+            pbar.update(1)
+            if out.passed:
+                passed.append(r)
+            else:
+                logger.info("  PPL 淘汰: %s (ppl %.1f > %.1f)",
+                            os.path.basename(r.filepath), out.ppl, ppl_filter.threshold)
+                self._record_rejection(os.path.basename(r.filepath), "ppl",
+                                       f"ppl_{out.ppl:.1f}", r.text)
+                self.stats.texts_filtered += 1
+                self.stats.ppl_filtered += 1
+        pbar.close()
+        logger.info("[PPL] 困惑度过滤: %d -> %d (淘汰 %d, 打分异常放行 %d)",
+                    len(results), len(passed), self.stats.ppl_filtered,
+                    self.stats.ppl_errors)
+        return passed
 
     # ================= 质量评分 =================
     def _quality_check(self, results: List[ReaderResult]) -> List[ReaderResult]:
@@ -584,6 +661,12 @@ class FileProcessorPipeline:
             "cache": self.cache.summary(),
             "texts_cleaned": self.stats.texts_cleaned,
             "texts_filtered": self.stats.texts_filtered,
+            "ppl_filter": {
+                "enabled": self.ppl_filter is not None,
+                "threshold": self.ppl_filter.threshold if self.ppl_filter else None,
+                "filtered": self.stats.ppl_filtered,
+                "score_errors": self.stats.ppl_errors,
+            },
             "rejection_reasons": dict(self.rejections.most_common()),
             "exact_duplicate_samples_skipped": self.formatter.duplicates_skipped,
             "language_dist": dict(self.stats.language_dist.most_common()),

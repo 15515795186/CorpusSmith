@@ -66,7 +66,7 @@ FileProcessorPipeline.run()
 - `map_input_dirs()`：`--input-dir 根目录` 自动映射已知中文子目录
   （文本pdf/版式pdf/word/源码html/截图html/txt…只收真实存在的）。
 - 参数分层：`--config` JSON 打底 → CLI 显式项覆盖 → 环境变量兜底
-  （`DASHSCOPE_API_KEY`/`OPENAI_API_KEY` 等，`.env` 已由 dotenv 注入环境）。
+  （`DASHSCOPE_API_KEY` 等，`.env` 已由 dotenv 注入环境）。
 - `--dry-run` 只打印配置摘要与文件计数，零写入。
 
 ### config.py（ProcessorConfig）

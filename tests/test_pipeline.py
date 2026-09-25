@@ -6,6 +6,7 @@ import unittest
 
 from file_processor.config import ProcessorConfig
 from file_processor.pipeline import FileProcessorPipeline
+from file_processor.readers.base import ReaderResult
 from tests._tempdir import cleanup, workspace_tempdir
 
 TXT_A = (
@@ -54,6 +55,8 @@ class PipelineEndToEndTest(unittest.TestCase):
         self.config.output_dir = self.out_dir
         self.config.cache_dir = os.path.join(root, "cache")
         self.config.quality_enabled = False
+        # PPL 是本地小 LM 的打分闸: 端到端用例用合成短文本, 不该依赖几百 MB 模型缓存
+        self.config.enable_ppl_filter = False
         self.config.max_workers = 2
         self.config.chunk_size = 200
         self.config.chunk_overlap = 20
@@ -106,6 +109,24 @@ class PipelineEndToEndTest(unittest.TestCase):
         self.assertEqual(report["total_files"], 4)
         self.assertEqual(report["config"]["dashscope_api_key"], "")
         self.assertIn("pretrain", report["datasets"])
+
+    def test_ppl_score_error_passes_sample_through(self):
+        """PPL 单条打分异常时必须放行(不淘汰)并计数, 不能因一个坏样本炸全流程"""
+        pipeline = FileProcessorPipeline(self.config)
+
+        class RaisingFilter:          # 冒充 PPLFilter: 只有 threshold 与 check
+            threshold = 13.78
+
+            def check(self, text):
+                raise RuntimeError("模拟打分异常")
+
+        pipeline.ppl_filter = RaisingFilter()
+        results = [ReaderResult(text=TXT_A, filepath=os.path.join(self.txt_dir, "a.txt"),
+                                file_type="txt")]
+        kept = pipeline._ppl_check(results)
+        self.assertEqual(len(kept), 1, "打分异常必须放行, 不得淘汰")
+        self.assertEqual(pipeline.stats.ppl_errors, 1)
+        self.assertEqual(pipeline.stats.ppl_filtered, 0)
 
     def test_rerun_does_not_duplicate_records(self):
         FileProcessorPipeline(self.config).run()

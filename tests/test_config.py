@@ -86,10 +86,8 @@ class ConfigTest(unittest.TestCase):
     def test_to_dict_redacts_api_keys(self):
         config = ProcessorConfig()
         config.dashscope_api_key = "sk-secret"
-        config.openai_api_key = "sk-secret-2"
         redacted = config.to_dict(redact=True)
         self.assertEqual(redacted["dashscope_api_key"], "***redacted***")
-        self.assertEqual(redacted["openai_api_key"], "***redacted***")
         # 不 redact 时保留原值（供存储使用）
         self.assertEqual(config.to_dict()["dashscope_api_key"], "sk-secret")
 

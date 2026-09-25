@@ -19,9 +19,18 @@ logger = logging.getLogger(__name__)
 class InstructionConverter:
     """转换为指令微调数据集格式"""
 
-    def __init__(self, max_samples: int = 0, llm_generator=None):
+    def __init__(self, max_samples: int = 0, llm_generator=None,
+                 sample_check_ratio: float = 0.0,
+                 review_output: str = "",
+                 verify_code_exec: bool = False,
+                 llm_max_attempts: int = 1):
         self.max_samples = max_samples
         self.llm_generator = llm_generator
+        # 样本级校验（转换后）
+        self.sample_check_ratio = sample_check_ratio   # LLM 语义抽检比例（0=关）
+        self.review_output = review_output             # 争议样本导出路径（人工双人审核）
+        self.verify_code_exec = verify_code_exec       # 代码题运行验证（默认关）
+        self.llm_max_attempts = llm_max_attempts       # 拒绝采样: chunk 生成硬校验全废时重试上限
 
     def convert(self, result: ReaderResult) -> List[Dict]:
         """将读取结果转换为指令样本列表"""
@@ -33,9 +42,10 @@ class InstructionConverter:
         text = re.sub(r'\*\*([^*\n]+?)\*\*', r'\1', text)
         samples = []
 
-        # 先尝试用模板规则生成
+        # 先尝试用模板规则生成（加帽：模板样本封顶 10 条，保证 LLM 通道有补充空间；
+        # 否则长文档模板先吃满 max_samples，LLM 增强形同虚设）
         template_samples = self._generate_from_templates(text, result)
-        samples.extend(template_samples)
+        samples.extend(template_samples[:10])
 
         # 如果启用了LLM，用LLM补充更多样化的指令
         if self.llm_generator and len(samples) < 20:
@@ -46,6 +56,36 @@ class InstructionConverter:
         if self.max_samples > 0:
             samples = samples[:self.max_samples]
 
+        # 确定性硬校验（隐私红线 / 代码运行）: 不合格直接剔除
+        samples = self._hard_validate(samples)
+
+        # LLM 语义抽检(答案基于材料/指令可执行/无幻觉; 争议样本导出人工审核)
+        if self.sample_check_ratio > 0 and self.llm_generator and samples:
+            samples = self._semantic_sample_check(samples)
+
+        return samples
+
+    def _hard_validate(self, samples: List[Dict]) -> List[Dict]:
+        """确定性硬校验（《数据集介绍.md》6.2/1.3）：隐私红线、代码运行。
+        不合格样本直接剔除（机器可复现的客观判定）。"""
+        from ..utils.validation import privacy_scan, code_exec_check
+        bad_reasons = {}
+        for i, s in enumerate(samples):
+            hits = privacy_scan((s.get("input") or "") + " " + (s.get("output") or ""))
+            if hits:
+                bad_reasons[i] = f"隐私未脱敏({','.join(sorted(hits))})"
+                continue
+            if self.verify_code_exec:
+                r = code_exec_check((s.get("input") or "") + " " + (s.get("output") or ""))
+                if r is False:
+                    bad_reasons[i] = "代码运行失败或输出不符"
+                    continue
+        if bad_reasons:
+            counts = {}
+            for r in bad_reasons.values():
+                counts[r] = counts.get(r, 0) + 1
+            logger.warning("SFT 确定性校验剔除 %d 条: %s", len(bad_reasons), counts)
+            samples = [s for i, s in enumerate(samples) if i not in bad_reasons]
         return samples
 
     # 开卷样本材料/输出长度上限
@@ -149,7 +189,7 @@ class InstructionConverter:
             if lens[len(lens) // 2] < 10:
                 continue  # 短词占多数：目录/章节名，不是实质条目
             # 截到材料预算内，保证"答案不超出所给材料"
-            budget, kept = self.MATERIAL_MAX, []
+            budget, kept, kept_segs = self.MATERIAL_MAX, [], []
             raw = ""
             for b, d in zip(block, descs):
                 seg = text[b.start():b.end()]
@@ -157,13 +197,16 @@ class InstructionConverter:
                     break
                 raw += seg + "\n"
                 kept.append(d)
+                kept_segs.append(seg)
             if len(kept) < 3:
                 continue
             context = self._find_list_context(text, [kept[0]])
             if context and len(context) > 30:
                 context = ""
             ref = f"其中关于「{context}」的" if context else "其中的"
-            out_numbered = "\n".join(f"{k + 1}. {d}" for k, d in enumerate(kept))
+            # output 保留原文条目行(含(一)(二)等层级编号标签), 与 input 逐条对应;
+            # 重编号会剥掉"(二)"标签造成 input/output 不一致, 被审查判 fail
+            out_numbered = "\n".join(s.strip() for s in kept_segs)
             samples.append({
                 "instruction": f"根据以下材料，将{ref}内容要点逐条列举并编号。",
                 "input": raw.strip()[:self.MATERIAL_MAX],
@@ -286,89 +329,266 @@ class InstructionConverter:
         # 按长度切块，每块生成指令
         chunks = self._split_into_chunks(text, 1500)
         for chunk in chunks[:5]:  # 最多处理5块
-            try:
-                prompt = self._build_instruction_prompt(chunk, language)
-                response = self.llm_generator.generate(
-                    prompt,
-                    system_prompt="你是一个专业的数据标注助手。请根据文本内容生成高质量的指令-响应对。"
-                )
+            # 拒绝采样(失败重试制): 该块一次生成产出 0 条有效样本才重试
+            # (上限 llm_max_attempts); 有 1 条即停 → 多数场景零额外成本
+            chunk_samples: List[Dict] = []
+            for attempt in range(max(1, self.llm_max_attempts)):
+                try:
+                    prompt = self._build_instruction_prompt(chunk, language)
+                    response = self.llm_generator.generate(
+                        prompt,
+                        system_prompt="你是一个专业的数据标注助手。请根据文本内容生成高质量的指令-响应对。"
+                    )
 
-                parsed = self._parse_llm_output(response)
-                for item in parsed:
-                    item["source"] = source
-                    samples.append(item)
+                    parsed = self._parse_llm_output(response)
+                    from ..utils.validation import trim_incomplete_output
+                    for item in parsed:
+                        # 兜底: 指代材料的题(input 为空)自动补材料节选,
+                        # 防止"该文件/该方案"类指令无依据输出
+                        inp = item.get("input", "")
+                        if not inp and self._REFER_RE.search(item.get("instruction", "")):
+                            item["input"] = chunk[:600]
+                        # input 节选清理: 尾部残缺编号行("1." 行首且无句号)裁掉,
+                        # 尾部非完整句裁到最近句号——审查员据此判"材料截断不完整"
+                        item["input"] = self._tidy_input(item.get("input", ""))
+                        # 截断兜底: max_tokens 腰斩的 output 裁到最近完整句;
+                        # 裁后不足 min_len 或全无标点 → 视为废样本丢弃
+                        out = trim_incomplete_output(item.get("output", ""))
+                        if out is None:
+                            logger.warning("SFT LLM 样本输出被截断且无有效完整句, 丢弃: %s",
+                                           str(item.get("output"))[:40])
+                            continue
+                        item["output"] = out
+                        # 数字一致性硬查(防幻觉): output 中的数值须能追溯到 input/上下文
+                        material = item.get("input", "") or chunk
+                        from ..utils.validation import numeric_consistency
+                        if not numeric_consistency(item.get("output", ""), material,
+                                       full_material=text):
+                            logger.warning("SFT LLM 样本未过数字一致性校验, 丢弃: %s",
+                                           str(item.get("output"))[:40])
+                            continue
+                        item["source"] = source
+                        chunk_samples.append(item)
 
-            except Exception as e:
-                logger.warning("LLM generation failed: %s", e)
-                continue
+                    if attempt > 0:
+                        logger.info("SFT LLM chunk 重试第 %d 次: 产出 %d 条有效样本",
+                                    attempt + 1, len(chunk_samples))
+                except Exception as e:
+                    logger.warning("LLM generation failed: %s", e)
+                if chunk_samples:
+                    break
+            samples.extend(chunk_samples)
 
         return samples
 
+    _REFER_RE = re.compile(r'该文本|该文件|该方案|该材料|上述|其中|这段文字|以上材料|以下材料|文中|文本中|材料中|原文|所给材料|内容中|文章中|文件信息|根据材料|基于材料|材料，|材料。')
+    _NUM_LINE_RE = re.compile(r'^\s*(?:\d+|[一二三四五六七八九十]+|（?(?:第)?[一二三四五六七八九十0-9]{1,4}）?)[.、．）]')
+
+    @staticmethod
+    def _tidy_input(inp: str) -> str:
+        """LLM 填充的 input 节选清理：从尾部逐行裁掉残缺行
+        (编号行首且无句号 / 末尾行不以句号结尾)，直到末行完整
+        (以句号结尾)或为空——自包含题允许空 input。"""
+        if not inp:
+            return ""
+        lines = [l for l in inp.rstrip().splitlines() if l.strip()]
+        while lines:
+            last = lines[-1].strip()
+            if last.endswith('。'):
+                break
+            if InstructionConverter._NUM_LINE_RE.match(last):
+                lines.pop()
+                continue
+            break
+        while lines and not lines[-1].strip().endswith('。'):
+            lines.pop()
+        out = "\n".join(lines).strip()[:2000]
+        # 保护: 输入非空但清理后为空(如导航区全是无句号短行)时保留末行,
+        # 否则兜底补的材料会被自身清理撤销, 指代题又变 input 空
+        return out if out else (inp.strip()[:500] if inp else "")
+
     def _split_into_chunks(self, text: str, max_chars: int) -> List[str]:
-        """智能分块"""
-        chunks = []
-        paragraphs = text.split('\n\n')
-        current = ""
-        for para in paragraphs:
-            if len(current) + len(para) > max_chars and current:
-                chunks.append(current.strip())
-                current = para
-            else:
-                current += "\n\n" + para if current else para
-        if current:
-            chunks.append(current.strip())
-        return chunks
+        """行级分块: 以行为单位累积(行=完整段落/编号条目), 超预算 flush。
+
+        旧实现按 \\n\\n 段落切——政策正文("1.xxx\\n2.xxx" 单换行无空行)会被
+        当成一个长段, 产生"导航区 114 字符碎片"或 8000 字符巨块, LLM 无法
+        基于碎片/巨块生成有效样本。行级保证编号条目不拆断。
+        """
+        lines = [l.strip() for l in text.split('\n') if l.strip()]
+        chunks, cur, used = [], [], 0
+        for ln in lines:
+            if used + len(ln) + 1 > max_chars and cur:
+                chunks.append('\n'.join(cur))
+                cur, used = [], 0
+            # 兜底: 单行超长(清洗后无换行的长文)按句切
+            while len(ln) > max_chars:
+                cut = -1
+                for mLen in (40, 20):
+                    pos = max(ln.rfind(c, 0, max_chars) for c in '。；;') if any(c in ln[:max_chars] for c in '。；;') else -1
+                    if pos >= 0:
+                        cut = pos + 1
+                        break
+                if cut <= 0:
+                    cut = max_chars
+                if cur:
+                    chunks.append('\n'.join(cur))
+                    cur, used = [], 0
+                chunks.append(ln[:cut])
+                ln = ln[cut:]
+            cur.append(ln)
+            used += len(ln) + 1
+        if cur:
+            chunks.append('\n'.join(cur))
+        return chunks or ([text] if text else [])
 
     def _build_instruction_prompt(self, text: str, language: str) -> str:
-        """构建LLM生成指令的prompt"""
+        """构建LLM生成指令的prompt（单模板参数化 + 真实数据集 few-shot 风格参考）"""
         if language == "zh":
-            return f"""从以下文本中生成3-5个高质量的指令-响应对，覆盖不同的信息维度（总结、提取、问答、推理等）。
+            rules = (
+                "要求：\n"
+                "1. 指令要多样，覆盖不同信息维度：总结、提取、问答（开卷+自包含)、改写、分类、推理、建议、比较\n"
+                "2. 同一段文本至少覆盖 3-5 种不同形态，不要重复类似提问\n"
+                "3. 答案必须严格基于文本内容，不编造\n"
+                "4. 题目需要参考原文材料才能作答的，把相关材料节选放入 input；题目自包含（不指向特定文档的通识问答）input 留空\n"
+                "4.1 凡指令中出现「该文本/该文件/该方案/该材料/上述/其中/这段文字」等指代词，都是引用材料的题目，input 必须非空（放入材料节选）；\n"
+                "    材料中没有答案的问题（如出处/URL/作者信息）不要生成；仅当材料足够回答时才生成该条\n"
+                "5. 输出JSON数组格式，每个对象**必须且只能**包含三个字段：instruction、input、output（不要用 response 等其他字段名）\n"
+                "6. 列举/清点类答案要点化：每条一行、必须是一句成分完整的短句（有主语、以句号结尾），每条不超过35字；"
+                "严禁输出无主语的短语残片（如“比例不得低于20%”是残片，应写“非化石能源消费占比不得低于20%左右。”）"
+            )
+            shots = (
+                '{"instruction": "三原色是什么？", "input": "", "output": "三原色通常指的是红、绿、蓝（RGB）；在印刷/绘画中以颜料为基则是红、黄、蓝（RYB）。"}'
+                '  ← 自包含通识问答，input 留空\n'
+                '{"instruction": "根据以下材料，总结其主要内容的要点。", "input": "（材料节选……）", "output": "1. ……\\n2. ……"}'
+                '  ← 开卷问答，材料节选必须放进 input'
+            )
+        else:
+            rules = (
+                "Requirements:\n"
+                "1. Diverse instructions covering multiple dimensions: summarization, extraction, "
+                "open-book & self-contained Q&A, rewriting, classification, reasoning, advice, comparison\n"
+                "2. Cover at least 3-5 different task types per text chunk; do not repeat similar questions\n"
+                "3. Answers must be strictly based on the text, no fabrication\n"
+                "4. If a question requires the source material to answer, put an excerpt in \"input\"; "
+                "leave \"input\" empty only for self-contained general-knowledge questions\n"
+                "5. Output a JSON array; every object MUST contain exactly instruction, input, output "
+                "(do not use other field names like response)\n"
+                "6. For listing/enumeration answers put each item on its own line as a COMPLETE short "
+                "sentence (with subject, ending in a period), ≤35 chars per line; "
+                "never output subject-less fragments (e.g. write \"The share target is no less than 20%.\" "
+                "instead of \"no less than 20%\")"
+            )
+            shots = (
+                '{"instruction": "Give three tips for staying healthy.", "input": "", "output": "1.Eat a balanced diet and make sure to include plenty of fruits and vegetables. \\n2. Exercise regularly to keep your body active and strong. \\n3. Get enough sleep and maintain a consistent sleep schedule."}'
+                '  <- self-contained Q&A, input empty\n'
+                '{"instruction": "Based on the following material, summarize its key points.", "input": "(material excerpt)", "output": "1. ...\\n2. ..."}'
+                '  <- open-book Q&A, excerpt goes into input'
+            )
+        return f"""从以下文本中生成3-5个高质量的指令-响应对。
 
-要求：
-1. 指令要多样，覆盖不同信息维度
-2. 答案必须严格基于文本内容，不编造
-3. 题目需要参考原文材料才能作答的，把相关材料节选放入 input；题目自包含（不指向特定文档的通识问答）input 留空
-4. 输出JSON数组格式
+{rules}
+
+参考真实数据集的样本风格（保持这样的字段结构和简洁度，不要照抄题目）：
+{shots}
 
 文本内容：
 {text}
 
-请按以下格式输出（严格JSON数组）：
+请按以下格式输出（严格JSON数组，不要包含其他文字）：
 [
-  {{"instruction": "根据以下材料，总结……", "input": "（材料节选……）", "output": "……"}},
-  {{"instruction": "什么是XX？", "input": "", "output": "……"}},
-  ...
-]"""
-        else:
-            return f"""Generate 3-5 high-quality instruction-response pairs from the following text.
-Cover multiple dimensions: summarization, extraction, Q&A, reasoning, etc.
-
-Requirements:
-1. Diverse instructions
-2. Answers must be strictly based on the text
-3. If a question requires source material to answer, put an excerpt of that material in "input"; leave "input" empty only for self-contained general-knowledge questions
-4. Output in JSON array format
-
-Text:
-{text}
-
-Output format (strict JSON array):
-[
-  {{"instruction": "Based on the following material, summarize...", "input": "(material excerpt...)", "output": "..."}},
-  {{"instruction": "What is X?", "input": "", "output": "..."}},
+  {{"instruction": "...", "input": "...", "output": "..."}},
   ...
 ]"""
 
     def _parse_llm_output(self, response: str) -> List[Dict]:
-        """解析LLM输出的JSON"""
+        """解析LLM输出的JSON,并归一化字段(容错 response/output 混用)"""
         try:
             # 尝试提取JSON
             json_match = re.search(r'\[.*\]', response, re.DOTALL)
             if json_match:
                 data = json.loads(json_match.group())
                 if isinstance(data, list):
-                    return data
+                    normalized = []
+                    for item in data:
+                        if not isinstance(item, dict):
+                            continue
+                        # 模型偶尔把 answer 字段写成 response -> 归一化
+                        if "response" in item and "output" not in item:
+                            item["output"] = item.pop("response")
+                        item.setdefault("input", "")
+                        # 缺 instruction 或 output 的样本没有训练价值,丢弃
+                        if item.get("instruction") and item.get("output"):
+                            normalized.append(item)
+                    return normalized
             return []
         except (json.JSONDecodeError, Exception) as e:
             logger.warning("Failed to parse LLM output: %s", e)
             return []
+
+    # ============ 样本级 LLM 语义抽检(答案基于材料/指令可执行/无幻觉/无有害) ============
+    _CHECK_PROMPT = """请从严审查以下指令微调训练样本。四项检查：
+1. output 是否严格基于 input 材料作答(自包含通识题须合理正确), 无材料外事实/数字, 无幻觉
+2. instruction 是否明确、可执行
+3. input 语义是否正确(开卷题含材料节选, 自包含题为空)
+4. 无有害/违法/危险内容, 无隐私信息
+
+输出严格 JSON: {{"pass": true 或 false, "reason": "一句话理由"}}
+
+样本(JSON):
+{data}
+"""
+
+    def _semantic_sample_check(self, samples: List[Dict]) -> List[Dict]:
+        """LLM 语义抽检：抽样审查。明确 pass=false 或无法判定的样本**不移除主集**，
+        而是标记后写入待人工审核清单（双人审核/仲裁为人工流程，见《数据集介绍.md》1.2）。"""
+        if not self.llm_generator:
+            return samples
+        import random
+        n = min(len(samples), max(1, int(len(samples) * self.sample_check_ratio)))
+        idx = random.sample(range(len(samples)), n)
+        review, review_idx = [], set()  # (原样本, 原因) 与对应下标
+        for i in idx:
+            s = samples[i]
+            try:
+                resp = self.llm_generator.generate(
+                    self._CHECK_PROMPT.format(data=json.dumps({
+                        "instruction": s.get("instruction", ""),
+                        "input": s.get("input") or "",
+                        "output": s.get("output") or "",
+                    }, ensure_ascii=False)),
+                    system_prompt="你是训练数据质量审查员，严格把关，宁可剔除也不放过坏样本。")
+                m = re.search(r'"pass"\s*:\s*(true|false)', resp, re.IGNORECASE)
+                if m and m.group(1).lower() == 'true':
+                    continue  # 判定合格
+                if m:
+                    rm = re.search(r'"reason"\s*:\s*"([^"]*)"', resp)
+                    review.append((s, 'LLM 判定不合格: ' + (rm.group(1) if rm else '未给出理由')))
+                else:
+                    review.append((s, 'LLM 未返回可解析判定(争议样本)'))
+                review_idx.add(i)
+            except Exception as e:
+                review.append((s, f'抽检调用异常: {e}'))
+                review_idx.add(i)
+        if review:
+            # 争议样本移出主集(不进训练), 导出人工审核; 人工仲裁后可决定救回/丢弃
+            logger.warning("LLM 抽检移除 %d/%d 个争议样本并导出人工审核 (总 %d 条)",
+                           len(review), n, len(samples))
+            self._flush_review(review)
+            samples = [s for k, s in enumerate(samples) if k not in review_idx]
+        return samples
+
+    def _flush_review(self, review):
+        """争议样本落盘成待人工审核清单（review_output 配置时）；空路径则仅记日志。"""
+        if not self.review_output or not review:
+            return
+        import time
+        try:
+            with open(self.review_output, 'a', encoding='utf-8') as f:
+                for s, reason in review:
+                    rec = dict(s)
+                    rec['_review_reason'] = reason
+                    rec['_review_ts'] = time.strftime('%Y-%m-%d %H:%M:%S')
+                    f.write(json.dumps(rec, ensure_ascii=False) + '\n')
+            logger.info("待人工审核样本 %d 条已追加: %s", len(review), self.review_output)
+        except OSError as e:
+            logger.warning("无法写入审核清单 %s: %s", self.review_output, e)

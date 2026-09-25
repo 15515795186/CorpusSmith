@@ -20,6 +20,8 @@ class StatsCollector:
         self.files_failed = 0
         self.texts_cleaned = 0
         self.texts_filtered = 0
+        self.ppl_filtered = 0          # 困惑度过滤淘汰的文本数
+        self.ppl_errors = 0            # 困惑度打分异常(放行不淘汰)的文本数
         self.duplicates_removed = 0
         self.cache_hits = 0
         self.pretrain_samples = 0
@@ -45,6 +47,8 @@ class StatsCollector:
         print(f"  命中读取缓存:      {self.cache_hits}")
         print(f"  清洗后文本段数:    {self.texts_cleaned}")
         print(f"  质量过滤丢弃:      {self.texts_filtered}")
+        print(f"  PPL 淘汰:          {self.ppl_filtered}")
+        print(f"  PPL 打分异常放行:  {self.ppl_errors}")
         print(f"  去重移除:          {self.duplicates_removed}")
         print(f"  预计总 Token 数:    {self.total_tokens_est:,}")
         print(f"  语言分布:          {dict(self.language_dist.most_common())}")

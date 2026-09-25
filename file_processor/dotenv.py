@@ -63,4 +63,4 @@ def load_dotenv(path: Optional[str] = None) -> Dict[str, bool]:
 
 def env_keys_present() -> List[str]:
     """当前进程可见的凭据键名（不含值），供启动日志提示来源用"""
-    return [k for k in ("DASHSCOPE_API_KEY", "OPENAI_API_KEY") if os.environ.get(k)]
+    return [k for k in ("DASHSCOPE_API_KEY",) if os.environ.get(k)]

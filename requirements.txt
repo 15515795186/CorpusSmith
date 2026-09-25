@@ -4,13 +4,10 @@ pypdf>=4.0             # pymupdf 不可用时的回退提取器
 beautifulsoup4>=4.12   # HTML 解析
 lxml>=5.0              # BeautifulSoup 解析器
 python-docx>=1.1       # .docx 读取
-langchain-text-splitters>=0.3   # 预训练数据分块
+# langchain-text-splitters>=0.3   # 已移除: 预训练分块改用标准库实现 (pretrain_converter.py)
 dashscope>=1.20        # 通义千问 Qwen-VL OCR / qwen-plus 质量评分
 chardet>=5.0           # TXT 编码自动检测
 tqdm>=4.66             # 进度条
-
-# ===== 可选：LLM 生成指令/COT（--llm --llm-provider openai）=====
-openai>=1.30
 
 # ===== 可选：数据采集/构建工具链（data/_pipeline，重跑数据构建时才需要）=====
 requests>=2.31

@@ -8,8 +8,7 @@
 | 文件 | 职责 |
 |------|------|
 | `base.py` | `BaseLLMGenerator` 抽象接口：`generate()` / `async_generate()` |
-| `dashscope_generator.py` | 通义千问文本生成（默认 `qwen-max`），`Generation.call`，重试+退避 |
-| `openai_generator.py` | OpenAI 兼容 chat.completions（默认 `gpt-4o-mini`），可选 `base_url`，重试+退避 |
+| `dashscope_generator.py` | 通义千问文本生成（默认 `qwen3.5-plus`），OpenAI 兼容 `/chat/completions`，重试+退避 |
 
 ## 谁在用
 
@@ -27,6 +26,6 @@
 ## 依赖
 
 - 内部：仅 `base.py`
-- 外部：`dashscope`（延迟 import）/ `openai`（延迟 import，未装 openai 包不影响运行）
-- key 来源：`ProcessorConfig` 的 `dashscope_api_key` / `openai_api_key`，
+- 外部：`dashscope`（延迟 import）；OpenAI 兼容端点走同一 SDK（`dashscope_generator` 内建 base_url）
+- key 来源：`ProcessorConfig` 的 `dashscope_api_key`，
   环境变量与项目根 `.env` 的回退链在 `main.build_config()` 完成

@@ -36,7 +36,7 @@ LLM_Data_Test/
 │   ├── cleaners/                    # text_cleaner / html_cleaner / quality_filter（README）
 │   ├── converters/                  # pretrain / instruction / cot（README：含 input 契约）
 │   ├── formatters/jsonl_formatter.py# 输出布局 + 重建/续跑/元数据（README）
-│   ├── llm/                         # 可选：openai / dashscope 生成器（README）
+│   ├── llm/                         # 可选：dashscope 生成器（README）
 │   └── utils/                       # lang_detect / dedup / stats / cache（README）
 ├── data/                            # 原始数据 + 数据构建工具链（详见 data/README.md）
 │   ├── 文本pdf/                     50 篇英文论文 PDF（文字层）
@@ -282,7 +282,7 @@ datasets/
 | `--no-rejected` | 不生成 `rejected.jsonl` |
 | `--max-workers` | 读取与评分并发数（默认 4） |
 | `--dry-run` | 只打印配置与待处理文件数 |
-| `--llm --llm-provider openai\|dashscope` | 启用 LLM 生成指令/COT |
+| `--llm --llm-provider dashscope` | 启用 LLM 生成指令/COT |
 | `-v/--verbose` | DEBUG 日志 |
 
 ---

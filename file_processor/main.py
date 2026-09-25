@@ -19,7 +19,7 @@ LLM 数据集处理工作流入口
   # 指定具体文件 / 只输出部分数据集
   python -m file_processor.main --files doc1.pdf,doc2.docx --output-types pretrain
   # 指定具体文件 / 指定输出路径(demo_out) / 指定并发数量(2)
-  python -m file_processor.main --files doc1.pdf,doc2.docx --output-dir demo_out --max-workers 2
+  python -m file_processor.main --files doc1.pdf,doc2.docx --output-dir demo_out --max-workers 2 --llm --llm-provider dashscope --llm-model qwen-plus
 """
 
 import argparse
@@ -112,8 +112,8 @@ def parse_args():
 
     # LLM 生成
     parser.add_argument("--llm", action="store_true", help="启用LLM生成指令/COT")
-    parser.add_argument("--llm-provider", default=None, choices=["openai", "dashscope"],
-                        help="LLM供应商 (default: openai)")
+    parser.add_argument("--llm-provider", default=None, choices=["dashscope"],
+                        help="LLM供应商 (default: dashscope)")
     parser.add_argument("--llm-model", default=None, help="LLM模型名 (覆盖默认)")
 
     # 质量评分
@@ -210,10 +210,7 @@ def build_config(args) -> ProcessorConfig:
     if args.llm_provider:
         config.llm_provider = args.llm_provider
     if args.llm_model:
-        if config.llm_provider == "openai":
-            config.openai_model = args.llm_model
-        else:
-            config.dashscope_model = args.llm_model
+        config.dashscope_model = args.llm_model
 
     # ---- 质量评分 ----
     if args.no_quality:
@@ -236,8 +233,6 @@ def build_config(args) -> ProcessorConfig:
     # ---- API key：先加载项目根 .env（可选，真实环境变量优先），再从环境变量补齐 ----
     from .dotenv import load_dotenv
     load_dotenv()
-    if not config.openai_api_key:
-        config.openai_api_key = os.getenv("OPENAI_API_KEY", "")
     if not config.dashscope_api_key:
         config.dashscope_api_key = os.getenv("DASHSCOPE_API_KEY", "")
 
