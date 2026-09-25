@@ -77,10 +77,11 @@ class ProcessorConfig:
 
     # ========== 困惑度过滤(免费预筛闸, 可选) ==========
     # 位置: 启发式过滤之后、LLM 质量评分之前。PPL 高 = 语言不自然(机器翻译腔/OCR噪声), 淘汰 ppl > 阈值
-    enable_ppl_filter: bool = True       # 已开闸: 阈值由 80 份爬取语料实跑标定(留档见 data/_pipeline/PPL扫码留档.md)
+    enable_ppl_filter: bool = True       # 已开闸: 阈值取绝对异常闸(非分位), 标定/决策过程见 data/_pipeline/PPL扫码留档.md
     ppl_model: str = "Qwen/Qwen2.5-0.5B" # 本地小 LM, 从 HUGGINGFACE_HUB_CACHE 缓存加载
-    ppl_threshold: float = 16.21         # 全量 80 份(清洗口径统一后)的 p95: 淘汰 >16.21 共 4 份(2 份 Gutenberg 封面页 + word_05 政务清单 + zh_pdf_06 油气规划); 0 = 扫码模式(只统计不淘汰)
-    ppl_quantile: float = 0.95           # 扫码模式自动定标分位数, 与上阈值同源(ceil 口径)
+    ppl_threshold: float = 25.0          # **极端异常闸**: 只拦机器翻译腔/乱码级异常(全量 80 份实测零淘汰);
+                                         # 不用分位阈值 —— q95(16.94) 会连正常语料一起切(含新爬英文正文页/政务清单/规划), 见 data/_pipeline/PPL扫码留档.md; 0 = 扫码模式(只统计不淘汰)
+    ppl_quantile: float = 0.95           # 仅扫码模式(标定/统计)使用; 生产阈值已改为上面的绝对异常闸, 不再按分位淘汰
     ppl_cache_dir: str = "D:/model"      # PPL 模型缓存根(与 data/_pipeline/scan_ppl_distribution.py 同源); 留空 = 跟随 HUGGINGFACE_HUB_CACHE/默认缓存
 
     # ========== 并发 ==========

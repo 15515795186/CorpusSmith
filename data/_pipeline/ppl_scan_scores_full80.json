@@ -1,0 +1,482 @@
+[
+ {
+  "category": "txt",
+  "file": "202403_高水平对外开放行动方案.txt",
+  "ppl": 8.31,
+  "source": "text"
+ },
+ {
+  "category": "txt",
+  "file": "202404_数字人才培育方案.txt",
+  "ppl": 5.95,
+  "source": "text"
+ },
+ {
+  "category": "txt",
+  "file": "202405_文旅项目投资通知.txt",
+  "ppl": 7.06,
+  "source": "text"
+ },
+ {
+  "category": "txt",
+  "file": "202405_节能降碳行动方案.txt",
+  "ppl": 6.01,
+  "source": "text"
+ },
+ {
+  "category": "txt",
+  "file": "202406_家政兴农行动方案.txt",
+  "ppl": 6.43,
+  "source": "text"
+ },
+ {
+  "category": "txt",
+  "file": "202407_精细化工产业实施方案.txt",
+  "ppl": 3.1,
+  "source": "text"
+ },
+ {
+  "category": "txt",
+  "file": "202408_新型电力系统行动方案.txt",
+  "ppl": 2.8,
+  "source": "text"
+ },
+ {
+  "category": "txt",
+  "file": "202408_碳排放双控工作方案.txt",
+  "ppl": 6.33,
+  "source": "text"
+ },
+ {
+  "category": "txt",
+  "file": "202410_智慧农业行动计划.txt",
+  "ppl": 9.3,
+  "source": "text"
+ },
+ {
+  "category": "txt",
+  "file": "202509_新型储能专项行动方案.txt",
+  "ppl": 3.09,
+  "source": "text"
+ },
+ {
+  "category": "word",
+  "file": "word_01_43c8228d06bfb3272505.docx",
+  "ppl": 7.88,
+  "source": "text"
+ },
+ {
+  "category": "word",
+  "file": "word_02_eac63a2772d4d86a5e6d.docx",
+  "ppl": 6.59,
+  "source": "text"
+ },
+ {
+  "category": "word",
+  "file": "word_03_4069eaa461399ff7ca7d.docx",
+  "ppl": 2.25,
+  "source": "text"
+ },
+ {
+  "category": "word",
+  "file": "word_04_7362e69a41dd396dd4ab.docx",
+  "ppl": 11.61,
+  "source": "text"
+ },
+ {
+  "category": "word",
+  "file": "word_05_e775227929298780ac6f.docx",
+  "ppl": 19.86,
+  "source": "text"
+ },
+ {
+  "category": "word",
+  "file": "word_06_6330c409fe471ba62052.docx",
+  "ppl": 13.39,
+  "source": "text"
+ },
+ {
+  "category": "word",
+  "file": "word_07_ad1c05a61a31c2a7351f.docx",
+  "ppl": 11.08,
+  "source": "text"
+ },
+ {
+  "category": "word",
+  "file": "word_08_8f4495f34b75cde1cd60.docx",
+  "ppl": 10.93,
+  "source": "text"
+ },
+ {
+  "category": "word",
+  "file": "word_09_64fb24e54b01dfa023e1.docx",
+  "ppl": 9.9,
+  "source": "text"
+ },
+ {
+  "category": "word",
+  "file": "word_10_cf3866f2b0b7dbb3710e.docx",
+  "ppl": 5.58,
+  "source": "text"
+ },
+ {
+  "category": "截图html",
+  "file": "shot_01_202405_节能降碳.png",
+  "ppl": 5.65,
+  "source": "ocr"
+ },
+ {
+  "category": "截图html",
+  "file": "shot_02_202408_新型电力.png",
+  "ppl": 5.08,
+  "source": "ocr"
+ },
+ {
+  "category": "截图html",
+  "file": "shot_03_202403_对外开放.png",
+  "ppl": 10.34,
+  "source": "ocr"
+ },
+ {
+  "category": "截图html",
+  "file": "shot_04_202406_家政兴农.png",
+  "ppl": 6.17,
+  "source": "ocr"
+ },
+ {
+  "category": "截图html",
+  "file": "shot_05_202404_数字人才.png",
+  "ppl": 10.58,
+  "source": "ocr"
+ },
+ {
+  "category": "截图html",
+  "file": "shot_06_202408_碳排放双控.png",
+  "ppl": 7.25,
+  "source": "ocr"
+ },
+ {
+  "category": "截图html",
+  "file": "shot_07_202410_智慧农业.png",
+  "ppl": 13.78,
+  "source": "ocr"
+ },
+ {
+  "category": "截图html",
+  "file": "shot_08_202407_精细化工.png",
+  "ppl": 2.49,
+  "source": "ocr"
+ },
+ {
+  "category": "截图html",
+  "file": "shot_09_202509_新型储能.png",
+  "ppl": 2.53,
+  "source": "ocr"
+ },
+ {
+  "category": "截图html",
+  "file": "shot_10_202405_文旅投资.png",
+  "ppl": 5.99,
+  "source": "ocr"
+ },
+ {
+  "category": "文本pdf中文版",
+  "file": "zh_pdf_01_十五五规划纲要.pdf",
+  "ppl": 5.83,
+  "source": "text"
+ },
+ {
+  "category": "文本pdf中文版",
+  "file": "zh_pdf_02_十四五规划纲要.pdf",
+  "ppl": 3.16,
+  "source": "text"
+ },
+ {
+  "category": "文本pdf中文版",
+  "file": "zh_pdf_03_十二五规划纲要.pdf",
+  "ppl": 3.01,
+  "source": "text"
+ },
+ {
+  "category": "文本pdf中文版",
+  "file": "zh_pdf_04_十三五六五规划纲要2016.pdf",
+  "ppl": 3.77,
+  "source": "text"
+ },
+ {
+  "category": "文本pdf中文版",
+  "file": "zh_pdf_05_新型能源体系十五五规划.pdf",
+  "ppl": 13.73,
+  "source": "text"
+ },
+ {
+  "category": "文本pdf中文版",
+  "file": "zh_pdf_06_石油天然气十五五规划.pdf",
+  "ppl": 18.93,
+  "source": "text"
+ },
+ {
+  "category": "文本pdf中文版",
+  "file": "zh_pdf_07_十四五生物经济发展规划.pdf",
+  "ppl": 9.22,
+  "source": "text"
+ },
+ {
+  "category": "文本pdf中文版",
+  "file": "zh_pdf_08_学宪法讲宪法活动流程.pdf",
+  "ppl": 8.64,
+  "source": "text"
+ },
+ {
+  "category": "文本pdf中文版",
+  "file": "zh_pdf_09_高等学校境外办学指南.pdf",
+  "ppl": 9.59,
+  "source": "text"
+ },
+ {
+  "category": "文本pdf中文版",
+  "file": "zh_pdf_10_政府网站工作年度报表.pdf",
+  "ppl": 12.12,
+  "source": "text"
+ },
+ {
+  "category": "文本pdf英文版",
+  "file": "en_pdf_01_2201.11903.pdf",
+  "ppl": 9.36,
+  "source": "text"
+ },
+ {
+  "category": "文本pdf英文版",
+  "file": "en_pdf_02_2203.11171.pdf",
+  "ppl": 7.75,
+  "source": "text"
+ },
+ {
+  "category": "文本pdf英文版",
+  "file": "en_pdf_03_2205.11916.pdf",
+  "ppl": 7.84,
+  "source": "text"
+ },
+ {
+  "category": "文本pdf英文版",
+  "file": "en_pdf_04_2310.01798.pdf",
+  "ppl": 7.93,
+  "source": "text"
+ },
+ {
+  "category": "文本pdf英文版",
+  "file": "en_pdf_05_2308.16171.pdf",
+  "ppl": 4.77,
+  "source": "text"
+ },
+ {
+  "category": "文本pdf英文版",
+  "file": "en_pdf_06_2302.04761.pdf",
+  "ppl": 14.63,
+  "source": "text"
+ },
+ {
+  "category": "文本pdf英文版",
+  "file": "en_pdf_07_2210.03429.pdf",
+  "ppl": 13.28,
+  "source": "text"
+ },
+ {
+  "category": "文本pdf英文版",
+  "file": "en_pdf_08_2310.10631.pdf",
+  "ppl": 10.35,
+  "source": "text"
+ },
+ {
+  "category": "文本pdf英文版",
+  "file": "en_pdf_09_2309.02420.pdf",
+  "ppl": 16.21,
+  "source": "text"
+ },
+ {
+  "category": "文本pdf英文版",
+  "file": "en_pdf_10_2404.14997.pdf",
+  "ppl": 10.25,
+  "source": "text"
+ },
+ {
+  "category": "源码html",
+  "file": "202403_高水平对外开放行动方案.html",
+  "ppl": 9.71,
+  "source": "text"
+ },
+ {
+  "category": "源码html",
+  "file": "202404_数字人才培育方案.html",
+  "ppl": 6.77,
+  "source": "text"
+ },
+ {
+  "category": "源码html",
+  "file": "202405_文旅项目投资通知.html",
+  "ppl": 5.33,
+  "source": "text"
+ },
+ {
+  "category": "源码html",
+  "file": "202405_节能降碳行动方案.html",
+  "ppl": 7.48,
+  "source": "text"
+ },
+ {
+  "category": "源码html",
+  "file": "202406_家政兴农行动方案.html",
+  "ppl": 7.5,
+  "source": "text"
+ },
+ {
+  "category": "源码html",
+  "file": "202407_精细化工产业实施方案.html",
+  "ppl": 6.65,
+  "source": "text"
+ },
+ {
+  "category": "源码html",
+  "file": "202408_新型电力系统行动方案.html",
+  "ppl": 5.78,
+  "source": "text"
+ },
+ {
+  "category": "源码html",
+  "file": "202408_碳排放双控工作方案.html",
+  "ppl": 7.43,
+  "source": "text"
+ },
+ {
+  "category": "源码html",
+  "file": "202410_智慧农业行动计划.html",
+  "ppl": 9.78,
+  "source": "text"
+ },
+ {
+  "category": "源码html",
+  "file": "202509_新型储能专项行动方案.html",
+  "ppl": 6.4,
+  "source": "text"
+ },
+ {
+  "category": "版式pdf中文版",
+  "file": "scan_zh_01_202405_节能降碳.pdf",
+  "ppl": 4.33,
+  "source": "ocr"
+ },
+ {
+  "category": "版式pdf中文版",
+  "file": "scan_zh_02_202408_新型电力.pdf",
+  "ppl": 4.5,
+  "source": "ocr"
+ },
+ {
+  "category": "版式pdf中文版",
+  "file": "scan_zh_03_202403_对外开放.pdf",
+  "ppl": 7.45,
+  "source": "ocr"
+ },
+ {
+  "category": "版式pdf中文版",
+  "file": "scan_zh_04_202406_家政兴农.pdf",
+  "ppl": 7.63,
+  "source": "ocr"
+ },
+ {
+  "category": "版式pdf中文版",
+  "file": "scan_zh_05_202404_数字人才.pdf",
+  "ppl": 8.93,
+  "source": "ocr"
+ },
+ {
+  "category": "版式pdf中文版",
+  "file": "scan_zh_06_202408_碳排放双控.pdf",
+  "ppl": 8.19,
+  "source": "ocr"
+ },
+ {
+  "category": "版式pdf中文版",
+  "file": "scan_zh_07_202410_智慧农业.pdf",
+  "ppl": 7.32,
+  "source": "ocr"
+ },
+ {
+  "category": "版式pdf中文版",
+  "file": "scan_zh_08_202407_精细化工.pdf",
+  "ppl": 5.36,
+  "source": "ocr"
+ },
+ {
+  "category": "版式pdf中文版",
+  "file": "scan_zh_09_202509_新型储能.pdf",
+  "ppl": 2.12,
+  "source": "ocr"
+ },
+ {
+  "category": "版式pdf中文版",
+  "file": "scan_zh_10_202405_文旅投资.pdf",
+  "ppl": 6.15,
+  "source": "ocr"
+ },
+ {
+  "category": "版式pdf英文版",
+  "file": "scan_en_01_mwee_guide.pdf",
+  "ppl": 13.09,
+  "source": "ocr"
+ },
+ {
+  "category": "版式pdf英文版",
+  "file": "scan_en_02_meteorology_educator.pdf",
+  "ppl": 16.94,
+  "source": "ocr"
+ },
+ {
+  "category": "版式pdf英文版",
+  "file": "scan_en_03_knowledge_transitions.pdf",
+  "ppl": 24.98,
+  "source": "ocr"
+ },
+ {
+  "category": "版式pdf英文版",
+  "file": "scan_en_04_mariners_guide.pdf",
+  "ppl": 14.41,
+  "source": "ocr"
+ },
+ {
+  "category": "版式pdf英文版",
+  "file": "scan_en_05_om_best_practices.pdf",
+  "ppl": 9.81,
+  "source": "ocr"
+ },
+ {
+  "category": "版式pdf英文版",
+  "file": "scan_en_06_comparing_instruments.pdf",
+  "ppl": 8.3,
+  "source": "ocr"
+ },
+ {
+  "category": "版式pdf英文版",
+  "file": "scan_en_07_hardness_five_methods.pdf",
+  "ppl": 16.0,
+  "source": "ocr"
+ },
+ {
+  "category": "版式pdf英文版",
+  "file": "scan_en_08_flight_control_math.pdf",
+  "ppl": 16.19,
+  "source": "ocr"
+ },
+ {
+  "category": "版式pdf英文版",
+  "file": "scan_en_09_exploring_the_extreme.pdf",
+  "ppl": 24.01,
+  "source": "ocr"
+ },
+ {
+  "category": "版式pdf英文版",
+  "file": "scan_en_10_thermocouple_methods.pdf",
+  "ppl": 14.27,
+  "source": "ocr"
+ }
+]

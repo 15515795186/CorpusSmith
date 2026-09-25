@@ -1,0 +1,82 @@
+[
+ {
+  "file": "scan_en_01_mwee_guide.pdf",
+  "chars": 2968,
+  "sentences": 16,
+  "ppl": 13.088515203569017,
+  "is_body": true,
+  "coverish": false
+ },
+ {
+  "file": "scan_en_02_meteorology_educator.pdf",
+  "chars": 3450,
+  "sentences": 24,
+  "ppl": 16.941068498560682,
+  "is_body": true,
+  "coverish": false
+ },
+ {
+  "file": "scan_en_03_knowledge_transitions.pdf",
+  "chars": 1649,
+  "sentences": 12,
+  "ppl": 24.978666188057513,
+  "is_body": true,
+  "coverish": false
+ },
+ {
+  "file": "scan_en_04_mariners_guide.pdf",
+  "chars": 1612,
+  "sentences": 10,
+  "ppl": 14.413385725796802,
+  "is_body": true,
+  "coverish": false
+ },
+ {
+  "file": "scan_en_05_om_best_practices.pdf",
+  "chars": 2926,
+  "sentences": 20,
+  "ppl": 9.810467110857658,
+  "is_body": true,
+  "coverish": false
+ },
+ {
+  "file": "scan_en_06_comparing_instruments.pdf",
+  "chars": 2696,
+  "sentences": 19,
+  "ppl": 8.300769875634908,
+  "is_body": true,
+  "coverish": false
+ },
+ {
+  "file": "scan_en_07_hardness_five_methods.pdf",
+  "chars": 3214,
+  "sentences": 36,
+  "ppl": 15.997955574789454,
+  "is_body": true,
+  "coverish": false
+ },
+ {
+  "file": "scan_en_08_flight_control_math.pdf",
+  "chars": 2017,
+  "sentences": 26,
+  "ppl": 16.18965678277701,
+  "is_body": true,
+  "coverish": false
+ },
+ {
+  "file": "scan_en_09_exploring_the_extreme.pdf",
+  "chars": 1925,
+  "sentences": 12,
+  "ppl": 24.0071599603813,
+  "is_body": true,
+  "coverish": false
+ },
+ {
+  "file": "scan_en_10_thermocouple_methods.pdf",
+  "chars": 2718,
+  "sentences": 20,
+  "ppl": 14.269476963428527,
+  "is_body": true,
+  "coverish": false
+ }
+]
