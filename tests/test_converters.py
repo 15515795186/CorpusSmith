@@ -324,5 +324,44 @@ class COTClassifyBilingualTest(unittest.TestCase):
         self.assertEqual(self._cls("该机制的原理是热传导，由于温差导致热量流动。"), "解释")
 
 
+
+
+class SkillTemplateReferenceTest(unittest.TestCase):
+    """生成 prompt 必须嵌 skill 的**真实数据集模板原文**。
+
+    回归点: COT 四类曾被我写成一句中文概述("真实样本风格(...)：..."),
+    丢了真实样本的字段结构与格式标记 —— 规范给了样本 JSON, 就该原样用。
+    """
+
+    def test_cot_shots_keep_real_sample_structure(self):
+        shots = COTConverter._COT_SHOT
+        self.assertIn("<<48/2=24>>", shots["推理"][1])
+        self.assertIn("#### 72", shots["推理"][1])
+        self.assertIn("openai/gsm8k", shots["推理"][0])
+        self.assertIn('"correct_answer"', shots["解释"][1])
+        self.assertIn('"support"', shots["解释"][1])
+        self.assertIn('"title"', shots["建议"][1])
+        self.assertIn('"body"', shots["建议"][1])
+        self.assertIn('"chosen"', shots["比较"][1])
+        self.assertIn('"rejected"', shots["比较"][1])
+
+    def test_cot_prompt_embeds_real_sample_both_languages(self):
+        cc = COTConverter()
+        for lang in ("zh", "en"):
+            p = cc._build_cot_prompt("问题", "答案", "材料", lang, "建议")
+            self.assertIn("legal-advice-reddit", p)
+            self.assertIn('"title"', p)
+            self.assertNotIn("真实样本风格(雇主裁员", p)   # 旧的中文转述不应再出现
+
+    def test_sft_shots_reference_real_datasets(self):
+        ic = InstructionConverter()
+        p_zh = ic._build_instruction_prompt("文本", "zh")
+        self.assertIn("alpaca-zh", p_zh)
+        self.assertIn("三原色是什么？", p_zh)
+        p_en = ic._build_instruction_prompt("text", "en")
+        self.assertIn("tatsu-lab/alpaca", p_en)
+        self.assertIn("Give three tips for staying healthy.", p_en)
+
+
 if __name__ == "__main__":
     unittest.main()

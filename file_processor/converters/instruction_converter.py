@@ -457,8 +457,8 @@ class InstructionConverter:
                 "严禁输出无主语的短语残片（如“比例不得低于20%”是残片，应写“非化石能源消费占比不得低于20%左右。”）"
             )
             shots = (
-                '{"instruction": "三原色是什么？", "input": "", "output": "三原色通常指的是红、绿、蓝（RGB）；在印刷/绘画中以颜料为基则是红、黄、蓝（RYB）。"}'
-                '  ← 自包含通识问答，input 留空\n'
+                '{"instruction": "三原色是什么？", "input": "", "output": "三原色通常指的是红色、绿色和蓝色（RGB）。……在印刷和绘画中，三原色指的是以颜料为基础的红、黄和蓝颜色（RYB）。……三原色的具体定义并不唯一，不同的颜色系统可能会采用不同的三原色。"}'
+                '  ← shibing624/alpaca-zh 真实样本(原文) · 自包含通识问答，input 留空\n'
                 '{"instruction": "根据以下材料，总结其主要内容的要点。", "input": "（材料节选……）", "output": "1. ……\\n2. ……"}'
                 '  ← 开卷问答，材料节选必须放进 input'
             )
@@ -480,7 +480,7 @@ class InstructionConverter:
             )
             shots = (
                 '{"instruction": "Give three tips for staying healthy.", "input": "", "output": "1.Eat a balanced diet and make sure to include plenty of fruits and vegetables. \\n2. Exercise regularly to keep your body active and strong. \\n3. Get enough sleep and maintain a consistent sleep schedule."}'
-                '  <- self-contained Q&A, input empty\n'
+                '  <- tatsu-lab/alpaca real sample (verbatim) · self-contained Q&A, input empty\n'
                 '{"instruction": "Based on the following material, summarize its key points.", "input": "(material excerpt)", "output": "1. ...\\n2. ..."}'
                 '  <- open-book Q&A, excerpt goes into input'
             )

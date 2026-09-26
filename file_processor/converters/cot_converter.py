@@ -814,15 +814,17 @@ input 中可见的内容，节选本身不构成不合格项（不要因"材料�
         "建议": "先明确目标与约束，再列出候选方案，给出取舍理由与预期效果，最终收敛为建议结论。",
         "比较": "明确比较维度，逐项事实对比，给出落在具体情境的结论，不能只写“各有优劣”。",
     }
+    # skill cot-dataset-generation 第二步的**真实数据集模板** —— 原样嵌入, 不做改写。
+    # 每类 = (数据集, 真实样本 JSON 原文, 中文释义[供中文材料参考])
     _COT_SHOT = {
-        "推理": ("真实样本风格(Natalia 卖夹子题)：Natalia sold 48/2 = 24 clips in May. "
-                 "Natalia sold 48+24 = 72 clips altogether. 因此答案是 72。"),
-        "解释": ("真实样本风格(为何奶酪/酸奶需某种微生物)：该微生物最适温度 25-40°C；"
-                 "食品制备（奶酪、酸奶）依赖其发酵作用，故常用之。"),
-        "建议": ("真实样本风格(雇主裁员规避病假是否合法)：先看法律约束（病假支付义务、"
-                 "裁员程序），再评估证据（临时解雇意图），最后给出可执行建议。"),
-        "比较": ("真实样本风格(两条摘要哪个更好)：维度：信息完整性/简洁度/误导性；"
-                 "逐项对比后给出取舍结论。"),
+        "推理": ("openai/gsm8k", '{"question": "Natalia sold clips to 48 of her friends in April, and then she sold half as many clips in May. How many clips did Natalia sell altogether in April and May?", "answer": "Natalia sold 48/2 = <<48/2=24>>24 clips in May.\nNatalia sold 48+24 = <<48+24=72>>72 clips altogether in April and May.\n#### 72"}',
+                 "逐句写出算式与中间值(<<算式=结果>> 形式), 最后收敛到最终答案(#### 答案)"),
+        "解释": ("allenai/sciq", '{"question": "What type of organism is commonly used in preparation of foods such as cheese and yogurt?", "correct_answer": "mesophilic organisms", "support": "Mesophiles grow best in moderate temperature, typically between 25°C and 40°C (77°F and 104°F). Mesophiles are often found living in or on the bodies of humans or other animals. The optimal growth temperature of many pathogenic mesophiles is 37°C (98°F), the normal human body temperature. Mesophilic organisms have important uses in food preparation, including cheese, yogurt, beer and wine."}',
+                 "question/correct_answer/support 三字段: 先给答案, 再用 support 说明机制与依据"),
+        "建议": ("jonathanli/legal-advice-reddit", '{"title": "My former employer fired everyone when they had to shutdown so they could avoid paying out sick time... Is this legal?", "body": "The title says most of it. I just heard back from a friend... Cafe Mooby stayed open until the last minute, and then terminated everyone\'s employment... I\'m just curious if it\'s legal, and if the workers can file a wrongful termination class-action lawsuit or something?"}',
+                 "真实样本为「情景 + 诉求」(title/body), 链要先列约束再对比方案后给可执行建议"),
+        "比较": ("CarperAI/openai_summarize_comparisons", '{"prompt": "SUBREDDIT: r/relationships\nTITLE: To admit or not to admit snooping...\nPOST: I [25M] have snooped in the past...", "chosen": "TL;DR: Snooped, found something, should I admit what I found...", "rejected": "TL;DR: I snooped, we talked about it, she wants to work it out, I\'m not sure..."}',
+                 "真实样本给出 prompt 与 chosen/rejected 两个候选, 链要按维度逐项对比后下结论"),
     }
 
     # skill cot-dataset-generation: 模板未命中 ≠ 不能生成 —— 问答对由材料
@@ -877,7 +879,16 @@ input 中可见的内容，节选本身不构成不合格项（不要因"材料�
         if task_type in self._COT_REQ:
             req = self._COT_REQ[task_type]
         shot = self._COT_SHOT.get(task_type) if task_type else None
-        shot_line = f"\n参考真实样本风格：\n{shot}" if shot else ""
+        if shot:
+            ds, sample, gloss = shot
+            if language == "zh":
+                shot_line = (f"\n参考真实数据集({ds})的真实样本风格(原样给出, 不要照抄题目):"
+                             f"\n{sample}\n(释义: {gloss})")
+            else:
+                shot_line = (f"\nReference style — a real sample from {ds} "
+                             f"(verbatim; do not copy its question):\n{sample}")
+        else:
+            shot_line = ""
         class_line = (f"\n任务类别：{task_type}\n按该类别的生成要求：\n{req}"
                       if task_type else
                       "\n请先判断这条材料最适合的推理类别（解释/推理/建议/比较），"
