@@ -72,6 +72,8 @@ class FileProcessorPipeline:
         # 质量评分"API/网络错误"来源单独落盘: 与"真低质淘汰"区分开 ——
         # 断网时被误淘汰的来源可按此清单定点补跑, 不必整轮重评
         self.quality_api_error_path = os.path.join(config.output_dir, "quality_api_error.jsonl")
+        self.quality_exempted_path = os.path.join(config.output_dir, "quality_exempted.jsonl")
+        self._exempt_file = None
         self._rejected_file = None
         self._api_error_file = None
 
@@ -509,6 +511,7 @@ class FileProcessorPipeline:
         scored = self.quality_scorer.score_batch(texts, sources, progress_callback=on_done)
         pbar.close()
 
+        exempt_sources = self._load_quality_exemptions()
         passed_results = []
         for i, (text, score, source) in enumerate(scored):
             if score.error:
@@ -518,7 +521,14 @@ class FileProcessorPipeline:
                 self._record_rejection(source, "quality_api_error", score.error, text)
                 self.stats.quality_api_errors += 1
                 continue
-            if score.passed:
+            if score.passed or source in exempt_sources:
+                if source in exempt_sources and not score.passed:
+                    # 人工复核决定保留(如"结尾自然收束"判据误伤节选型来源): 放行但留证
+                    logger.info("  人工豁免(经人工复核保留): %s (总分 %d/25) - %s",
+                                source, score.total_score,
+                                "; ".join(score.issues[:2]) or "")
+                    self._record_quality_exemption(source, score, text)
+                    self.stats.quality_exempted += 1
                 passed_results.append(results[i])
             else:
                 logger.info("  淘汰: %s (总分 %d/25) - %s",
@@ -657,6 +667,8 @@ class FileProcessorPipeline:
                 "enable_llm": self.config.enable_llm,
                 "quality_enabled": self.quality_scorer is not None,
                 "quality_api_errors": self.stats.quality_api_errors,
+            "quality_exempted": self.stats.quality_exempted,
+            "quality_exempted_path": os.path.basename(self.quality_exempted_path),
                 "quality_api_error_path": os.path.basename(self.quality_api_error_path),
                 "generation_workers": workers,
                 "llm_max_concurrency": self.config.llm_max_concurrency,
@@ -714,6 +726,8 @@ class FileProcessorPipeline:
                 "enable_llm": self.config.enable_llm,
                 "quality_enabled": self.quality_scorer is not None,
                 "quality_api_errors": self.stats.quality_api_errors,
+            "quality_exempted": self.stats.quality_exempted,
+            "quality_exempted_path": os.path.basename(self.quality_exempted_path),
                 "quality_api_error_path": os.path.basename(self.quality_api_error_path),
                 "resume": self.config.resume,
             },
@@ -782,6 +796,54 @@ class FileProcessorPipeline:
             logger.warning("[Resume] 读取 %s 失败: %s", self.rejected_path, e)
         return out
 
+    def _load_quality_exemptions(self) -> set:
+        """人工豁免名单: 质检淘汰但已由人工复核决定保留的来源
+
+        文件缺失/不可解析 → 按"无豁免"处理(绝不静默放行), 仅告警。
+        """
+        path = (self.config.quality_exempt_file or "").strip()
+        if not path:
+            return set()
+        if not os.path.exists(path):
+            alt = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", path))
+            if os.path.exists(alt):
+                path = alt
+            else:
+                return set()
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            logger.warning("[Quality] 人工豁免名单读取失败(%s): %s", path, e)
+            return set()
+        srcs = {os.path.basename(str(it.get("source", "")))
+                for it in (data.get("sources") or []) if it.get("source")}
+        if srcs:
+            logger.info("[Quality] 人工豁免名单: %d 个来源 (%s)", len(srcs), path)
+        return srcs
+
+    def _record_quality_exemption(self, source: str, score, text: str = ""):
+        """豁免留证: 记录被豁免来源的分数/维度/理由, 便于事后审计"谁被豁免、为什么" """
+        try:
+            if self._exempt_file is None:
+                os.makedirs(os.path.dirname(os.path.abspath(self.quality_exempted_path)) or ".",
+                            exist_ok=True)
+                mode = "a" if (self.config.resume and os.path.exists(self.quality_exempted_path)) else "w"
+                self._exempt_file = open(self.quality_exempted_path, mode, encoding="utf-8")
+            self._exempt_file.write(json.dumps({
+                "source": source,
+                "total_score": getattr(score, "total_score", None),
+                "dims": {k: getattr(score, k, None) for k in
+                         ("content_completeness", "language_quality", "information_density",
+                          "structure_clarity", "readability")},
+                "issues": list(getattr(score, "issues", []) or []),
+                "text_chars": len(text or ""),
+                "decided_by": "人工复核(结尾自然收束判据豁免)",
+            }, ensure_ascii=False) + "\n")
+            self._exempt_file.flush()
+        except Exception as e:
+            logger.warning("豁免留证写入失败(%s): %s", source, e)
+
     def _record_api_error(self, source: str, error: str, text: str = ""):
         """记录"评分调用失败(网络/限流/超时)"的来源 —— 与真低质淘汰分开
 
@@ -826,6 +888,8 @@ class FileProcessorPipeline:
             "rejection_reasons": dict(self.rejections.most_common()),
             # 断网/限流导致的评分失败: 与"真低质淘汰"分开, 按清单定点补跑即可
             "quality_api_errors": self.stats.quality_api_errors,
+            "quality_exempted": self.stats.quality_exempted,
+            "quality_exempted_path": os.path.basename(self.quality_exempted_path),
             "generation_failures": self.stats.generation_failures,
             "generation_empty": self.stats.generation_empty,
             "quality_api_error_path": os.path.basename(self.quality_api_error_path),

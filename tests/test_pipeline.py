@@ -311,5 +311,79 @@ class QualityApiErrorTest(unittest.TestCase):
         self.assertNotIn("a.txt", p._previous_deterministic_rejections())
 
 
+
+
+class QualityExemptionTest(unittest.TestCase):
+    """人工豁免: 质检未过但经人工复核保留(典型: "结尾自然收束"判据误伤节选型来源)
+
+    要求: ① 名单内来源放行 ② 名单外照旧淘汰 ③ 逐条留证 quality_exempted.jsonl
+    ④ run_report 计数, 便于审计
+    """
+
+    def _pipeline(self, stub, exempt=None):
+        tmp = workspace_tempdir()
+        self.addCleanup(cleanup, tmp)
+        txt_dir = os.path.join(tmp, "txt")
+        os.makedirs(txt_dir)
+        TXT_B = ("本市推进政务服务标准化建设，梳理高频事项清单，压减申请材料与办理时限，"
+                 "推动更多事项网上办、掌上办，方便企业与群众办事创业。")
+        for name, body in (("a.txt", TXT_A), ("b.txt", TXT_B)):
+            with open(os.path.join(txt_dir, name), "w", encoding="utf-8") as f:
+                f.write(body)
+        config = ProcessorConfig()
+        config.input_dirs = {"txt": txt_dir}
+        config.output_dir = os.path.join(tmp, "out")
+        config.cache_dir = os.path.join(tmp, "cache")
+        config.quality_enabled = True
+        config.enable_ppl_filter = False
+        config.output_types = ["pretrain"]
+        config.max_workers = 1
+        if exempt:
+            ex_path = os.path.join(tmp, "exempt.json")
+            with open(ex_path, "w", encoding="utf-8") as f:
+                json.dump({"sources": exempt}, f, ensure_ascii=False)
+            config.quality_exempt_file = ex_path
+        else:
+            config.quality_exempt_file = os.path.join(tmp, "missing.json")
+        p = FileProcessorPipeline(config)
+        p.quality_scorer = stub
+        return p
+
+    def _stub(self):
+        from file_processor.quality_scorer import QualityScore
+
+        class StubAllFail:
+            def score_batch(self, texts, sources, progress_callback=None):
+                return [(t, QualityScore(content_completeness=2, language_quality=5,
+                                         information_density=5, structure_clarity=5,
+                                         readability=5, total_score=22, passed=False,
+                                         issues=["内容完整性不足：结尾段突兀中断"]), s)
+                        for t, s in zip(texts, sources)]
+
+            def generate_report(self, scored, path):
+                return {"passed": 0, "failed": len(scored), "api_errors": 0, "pass_rate_percent": 0.0}
+
+        return StubAllFail()
+
+    def test_exempted_source_passes_and_is_recorded(self):
+        p = self._pipeline(self._stub(), exempt=[{"source": "a.txt", "reason": "仅结尾截断"}])
+        p.run()
+        ex_path = os.path.join(p.config.output_dir, "quality_exempted.jsonl")
+        self.assertTrue(os.path.exists(ex_path), "应生成 quality_exempted.jsonl")
+        with open(ex_path, encoding="utf-8") as f:
+            recs = [json.loads(l) for l in f if l.strip()]
+        self.assertEqual([r["source"] for r in recs], ["a.txt"])
+        self.assertEqual(recs[0]["total_score"], 22)
+        self.assertEqual(recs[0]["dims"]["content_completeness"], 2)
+
+        # 来源名存在 meta 里, 用 formatter 的 read_sources 取(与 resume 判据同源)
+        srcs = p.formatter.read_sources("pretrain")
+        self.assertIn("a.txt", srcs, "豁免来源应进入数据集")
+        self.assertNotIn("b.txt", srcs, "名单外来源照旧淘汰")
+
+        report = json.load(open(os.path.join(p.config.output_dir, "run_report.json"), encoding="utf-8"))
+        self.assertEqual(report["quality_exempted"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -74,6 +74,11 @@ class ProcessorConfig:
     quality_model: str = "qwen-plus"
     quality_min_per_dimension: int = 3
     quality_min_total: int = 20
+    # 人工豁免名单: 质检淘汰、但经人工复核判定应保留的来源(典型: "结尾自然收束"
+    # 判据误伤节选型来源)。JSON 结构 {"sources": [{"source": "<文件名>", "reason": "...",
+    # "scores": {...}}]}; 命中的来源即使质检未过也放行, 但逐条留证(quality_exempted.jsonl
+    # + run_report.quality_exempted), 便于审计"谁被豁免、为什么"。
+    quality_exempt_file: str = "data/_pipeline/人工豁免_结尾判据.json"
 
     # ========== 困惑度过滤(免费预筛闸, 可选) ==========
     # 位置: 启发式过滤之后、LLM 质量评分之前。PPL 高 = 语言不自然(机器翻译腔/OCR噪声), 淘汰 ppl > 阈值

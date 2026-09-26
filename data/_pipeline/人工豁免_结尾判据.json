@@ -1,0 +1,49 @@
+{
+  "purpose": "质检淘汰、但经人工复核决定保留的来源(典型: '结尾自然收束'判据误伤节选型来源)",
+  "decided_at": "2026-09-26",
+  "decided_by": "人工复核(用户确认)",
+  "scoring": {
+    "model": "qwen-plus",
+    "dimensions": "5 维各 1~5 分, 总分 25",
+    "pass_rule": "每维 ≥3 且总分 ≥20"
+  },
+  "admission_rule": "仅收录【总分 ≥20 且唯一低于 3 的维度是'内容完整性'】的样本 —— 其余样本即使豁免结尾判据仍不达标, 无挽留价值。",
+  "sources": [
+    {
+      "source": "shot_03_202403_对外开放.png",
+      "type": "截图OCR(节选)",
+      "total_score": 21,
+      "dims": {
+        "content_completeness": 2,
+        "language_quality": 5,
+        "information_density": 5,
+        "structure_clarity": 5,
+        "readability": 4
+      },
+      "low_dims": [
+        "完整性"
+      ],
+      "reason": "单页截图 OCR 节选, 天然不会自然收束; 除结尾外四维 5/5/5/4, 剔除该样本只因结尾判据",
+      "evidence": "datasets_full_20260926/结尾类淘汰_挽留价值.md",
+      "leading_issue": "结尾段在句子中间突兀中断（'标准认定、标准制定、标准认定……'重复堆砌后戛然而止），无省略标记，属于真实截断；该段本应阐述公平竞争环境建设措施，但实际内容失效，严重损害政策文本完整性与可用性"
+    },
+    {
+      "source": "shot_10_202405_文旅投资.png",
+      "type": "截图OCR(节选)",
+      "total_score": 21,
+      "dims": {
+        "content_completeness": 2,
+        "language_quality": 5,
+        "information_density": 5,
+        "structure_clarity": 5,
+        "readability": 4
+      },
+      "low_dims": [
+        "完整性"
+      ],
+      "reason": "单页截图 OCR 节选, 天然不会自然收束; 除结尾外四维 5/5/5/4, 剔除该样本只因结尾判据",
+      "evidence": "datasets_full_20260926/结尾类淘汰_挽留价值.md",
+      "leading_issue": "结尾段在句子中间突兀中断（'支持在线旅游平台经'明显未完成，无句号、无后续内容，亦无省略标记说明截断，属于真实内容截断；依据规则，内容完整性必须≤2分）"
+    }
+  ]
+}
