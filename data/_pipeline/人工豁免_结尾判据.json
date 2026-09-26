@@ -5,9 +5,9 @@
   "scoring": {
     "model": "qwen-plus",
     "dimensions": "5 维各 1~5 分, 总分 25",
-    "pass_rule": "每维 ≥3 且总分 ≥20"
+    "pass_rule": "每维 ≥3 且总分 ≥18 (run_config_full.json 覆盖默认 20)"
   },
-  "admission_rule": "仅收录【总分 ≥20 且唯一低于 3 的维度是'内容完整性'】的样本 —— 其余样本即使豁免结尾判据仍不达标, 无挽留价值。",
+  "admission_rule": "仅收录【总分 ≥ 本轮配置阈值(18) 且唯一低于 3 的维度是内容完整性】的样本 —— 其余样本即使豁免结尾判据仍不达标, 不构成改判据的理由。",
   "sources": [
     {
       "source": "shot_03_202403_对外开放.png",
@@ -44,6 +44,26 @@
       "reason": "单页截图 OCR 节选, 天然不会自然收束; 除结尾外四维 5/5/5/4, 剔除该样本只因结尾判据",
       "evidence": "datasets_full_20260926/结尾类淘汰_挽留价值.md",
       "leading_issue": "结尾段在句子中间突兀中断（'支持在线旅游平台经'明显未完成，无句号、无后续内容，亦无省略标记说明截断，属于真实内容截断；依据规则，内容完整性必须≤2分）"
+    },
+    {
+      "source": "scan_en_09_exploring_the_extreme.pdf",
+      "type": "单页扫描PDF(节选)",
+      "total_score": 18,
+      "dims": {
+        "content_completeness": 2,
+        "language_quality": 5,
+        "information_density": 4,
+        "structure_clarity": 3,
+        "readability": 4
+      },
+      "low_dims": [
+        "完整性"
+      ],
+      "reason": "单页扫描件节选, 天然不会自然收束; 总分 18 = 本轮阈值(18), 唯一低于 3 的维度是内容完整性(其余 5/4/3/4) —— 放宽结尾判据即可救回",
+      "evidence": "datasets_full_20260926/结尾类淘汰_挽留价值.md",
+      "leading_issue": "Content is abruptly truncated mid-sentence ('Because many of the activities and demonstrations apply to more than one subject area, a matrix chart identifies') — no period, no continuation, no省略标记 — this is a true截断, not sampling artifact; violates content completeness rule for结尾段突兀中断"
     }
-  ]
+  ],
+  "note": "本名单仅收 3 份: 阈值(18)已过线且唯一短板为内容完整性的样本。已由用户确认。",
+  "decided_count": 3
 }
