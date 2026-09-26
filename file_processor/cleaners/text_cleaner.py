@@ -75,7 +75,11 @@ _UI_PHRASES = (
     # 政务门户页眉/按钮文案(实测 reader 输出: "字号：默认大超大 | 打印 收藏 | 索引号：")
     # 注意: '收藏'/'打印' 是正常词汇(实测误删过 "国家美术发展和收藏工程"), 只能走行级规则
     '字号：默认大超大', '字号：默认大更大', '字号：默认超大', '字号：默认更大',
-    '字号：默认大', '字号：默认小', '大超大', '大更大', '超大',
+    '字号：默认大', '字号：默认小',
+    # 注意: '超大'/'大更大' 这类裸词**绝不能**进短语表 —— 实测把正文
+    # "充分发挥我国超大规模市场优势" 改成了 "充分发挥我国规模市场优势", 静默毁句。
+    # 字号残片改由行级规则(整行只有字号词)与 "字号：默认…" 正则处理。
+
 )
 _UI_PHRASES_RE = re.compile(
     r'(?m)(?:本作品来自[^。\n]{0,40}。依据[^。\n]{0,80}属于公有领域。'
@@ -139,26 +143,52 @@ _PORTAL_FOOTER_WEAK = ('联系我们', '微博', '微信', '注册', '驻外机�
                        '地方政府网站', '国务院部门网站', '驻港澳机构网站', '最高人民法院',
                        '最高人民检察院', '国家监察委员会', '中国政府网')
 
+# 页脚/侧栏的机构导航词(整行只由这些词构成即判为链接行)
+_PORTAL_NAV_TOKENS = ('全国人大', '全国政协', '国家监察委员会', '最高人民法院', '最高人民检察院',
+                      '国务院部门网站', '地方政府网站', '驻港澳机构网站', '驻外机构', '驻外机构网站',
+                      '中国政府网', '国务院客户端', '国务院客户端小程序', '国家政务服务平台')
+
 # 形态二: 元数据标签网格(gov.cn 页面字段表, 常整行无换行、重复两遍)
 #   "标 题：…通知发文机关：…发文字号：工信部联原〔2024〕136号来 源：…主题分类：…
 #    公文种类：通知成文日期：2024年07月02日" (再重复一遍)
 _META_LABELS = ('标 题', '标题', '发文机关', '发文字号', '来 源', '主题分类', '公文种类',
                 '成文日期', '索引号', '发布日期', '废止日期', '有效性', '主 题 词',
                 '公开责任部门', '所属机构', '内容概述')
-_META_ALT = '|'.join(re.escape(lab).replace(r'\ ', r'\s*') for lab in _META_LABELS)
+_META_DATE = r'\d{4}\s*[年\-]\s*\d{1,2}\s*[月\-]\s*\d{1,2}\s*日?'
+# 每个字段的"值"按该字段的真实形状匹配 —— 关键: 绝不能通配到行尾, 否则网格最后一个
+# 字段会把紧随其后的正文句子一起吃掉(实测 202403: "成文日期：2024年02月28日" 连带
+# 吞掉 "外商投资是参与中国式现代化建设…现制定如下行动方案。")。
+_META_VALUE = {
+    '标 题': r'[^\n。！？；]{0,150}', '标题': r'[^\n。！？；]{0,150}',
+    '发文机关': r'[^\n。！？；]{0,150}', '发文字号': r'[^\n。！？；]{0,40}',
+    '来 源': r'[^\n。！？；]{0,40}', '主题分类': r'[^\n。！？；]{0,80}',
+    '公文种类': r'[\u4e00-\u9fff]{2,12}', '成文日期': _META_DATE,
+    '索引号': r'[^\n。！？；]{0,40}', '发布日期': _META_DATE, '废止日期': _META_DATE,
+    '有效性': r'[\u4e00-\u9fff]{1,8}', '主 题 词': r'[^\n。！？；]{0,80}',
+    '公开责任部门': r'[^\n。！？；]{0,60}', '所属机构': r'[^\n。！？；]{0,60}',
+    '内容概述': r'[^\n。！？；]{0,150}',
+}
 _META_LABEL_SEARCH = [(lab, re.compile(re.escape(lab).replace(r'\ ', r'\s*') + r'\s*[:：]'))
                       for lab in _META_LABELS]
 _META_PAIR_RE = re.compile(
-    rf'(?:{_META_ALT})\s*[:：][^\n]{{0,300}}?(?=(?:{_META_ALT})\s*[:：]|$)')
-
-
-# 政务门户页脚/侧栏的机构导航词(整行只由这些词构成即判为链接行)
-_PORTAL_NAV_TOKENS = ('全国人大', '全国政协', '国家监察委员会', '最高人民法院', '最高人民检察院',
-                      '国务院部门网站', '地方政府网站', '驻港澳机构网站', '驻外机构', '驻外机构网站',
-                      '中国政府网', '国务院客户端', '国务院客户端小程序', '国家政务服务平台')
+    '(?:' + '|'.join(
+        re.escape(lab).replace(r'\ ', r'\s*') + r'\s*[:：]' + _META_VALUE.get(lab, r'[^\n。！？；]{0,60}')
+        for lab in _META_LABELS) + ')')
 
 
 _NAV_TOKENS_BY_LEN = tuple(sorted(_PORTAL_NAV_TOKENS, key=len, reverse=True))
+
+# 长行(断行修复把整页 OCR 拼成一行时)只摘"界面段", 绝不整行删 —— 否则正文会被一起吞掉。
+# 界面段 = 连续出现 ≥3 个界面/导航标记(允许其间夹分隔符), 实测页脚块正是这种形态。
+_CHROME_RUN_RE = re.compile(
+    '(?:(?:' + '|'.join(re.escape(t) for t in sorted(
+        set(_PORTAL_NAV_TOKENS) | set(_PORTAL_FOOTER_STRONG) | set(_PORTAL_FOOTER_WEAK),
+        key=len, reverse=True)) + r')[\s|·、,，/\\\-—]*){3,}')
+LONG_LINE = 300          # 超过此长度的行不做整行删
+# 只剩界面标签、不带值的光杆行(实测: "链接：" / "**下载链接：**" / "#### 发文字号")
+_BARE_UI_LINES = frozenset(('链接', '链接：', '相关链接', '相关链接：', '下载链接', '下载链接：',
+                            '收藏', '打印', '字体', '字号', '分享', '扫一扫'))
+_SIZE_WORD_LINES = frozenset(('更大', '超大', '大超大', '大更大', '最大', '默认', '大', '中', '小'))
 
 
 def _is_portal_nav_line(line: str) -> bool:
@@ -169,6 +199,7 @@ def _is_portal_nav_line(line: str) -> bool:
     "地方政府网站管理办法" 这类含实义的正文行不会被删。
     """
     core = re.sub(r'^[#>|\-*\s]+', '', line).strip()
+    core = re.sub(r'^(?:相关)?链接\s*[:：]\s*', '', core)   # "链接：全国人大…" 属页脚链接墙
     core = re.sub(r'[|\-—·、,，/\\\s]+', '', core)
     if not core:
         return False
@@ -416,20 +447,52 @@ class TextCleaner:
         """
         out = []
         seen_labels = set()
+        prev_was_label = False
         for line in text.split('\n'):
             s = line.strip()
             if not s:
                 out.append(line)
                 continue
-            if _is_portal_footer_line(s):
-                continue
+            if len(s) <= LONG_LINE:
+                if _is_portal_footer_line(s):
+                    continue                      # 短行: 整行是页脚/导航才删
+            else:
+                # 长行(常见于 OCR 整页被断行修复拼成一行): 只摘界面段, 保留正文
+                s = _CHROME_RUN_RE.sub(' ', s)
+                s = re.sub(r'\s{2,}', ' ', s).strip()
+                if not s:
+                    continue
             # 形态三: 每行一个字段标签(OCR 截图/扫描件常见, 如 "### 索引号：…")。
             # 同标签只保留首次 —— 质检点名的是"元数据重复出现至少 N 次", 单次出现属正常元数据。
             core = re.sub(r'^[#>\-*\s|]+', '', s)
-            labels_here = [lab for lab, rex in _META_LABEL_SEARCH if rex.match(core)]
+            # 字号控件残片(截图 OCR 的 HTML 转储里被标签劈开后只剩 "更大"/"超大")
+            if len(core) <= 4 and core in _SIZE_WORD_LINES:
+                continue
+            # 光杆/空值界面行: "链接：" / "**下载链接：**" / "#### 发文字号"(无值)
+            bare = re.sub(r'[#*_\s]+', '', core)
+            if bare in _BARE_UI_LINES or (len(bare) <= 12 and any(
+                    re.fullmatch(re.escape(lab).replace(r'\ ', r'\s*'), bare) for lab in _META_LABELS)):
+                continue
+            # 去掉行首的界面噪声("收藏 | 索引号：")后再判是否为字段标签行
+            core_lab = re.sub(r'^(?:收藏|打印|字号[^|：:]{0,12}|\||\-|\s)+', '', core)
+            labels_here = [lab for lab, rex in _META_LABEL_SEARCH if rex.match(core_lab)]
+            if not labels_here and len(core_lab) <= 80:
+                labels_here = [lab for lab, rex in _META_LABEL_SEARCH if rex.search(core_lab)]
+            # 网页字段表在 html 里常是"一行一个标签、值在下一行": 标签行与紧随其后的
+            # 短值行都要删(正文段落长且含句末标点, 不会被误删)
             if labels_here and labels_here[0] in seen_labels:
                 continue
+            if labels_here:
+                # 标签行: 整行短(≤80)且无句末标点 → 是网页字段表, 整行删
+                if len(core_lab) <= 80 and not re.search(r'[。！？；]', core_lab):
+                    seen_labels.update(labels_here)
+                    continue
+            elif prev_was_label and len(core) <= 80 and not re.search(r'[。！？；]', core):
+                continue                      # 上一行是标签行 → 本行是它的值, 删
+            prev_was_label = bool(labels_here)
             seen_labels.update(labels_here)
+            if not labels_here:
+                prev_was_label = False
             s2 = _strip_meta_grid(s)          # 形态二: 单行内多标签网格
             if not s2:
                 continue

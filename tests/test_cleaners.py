@@ -490,9 +490,25 @@ class PortalResidueTest(unittest.TestCase):
                "### 索引号：000014349/2024-00028\n### 发文机关：国务院办公厅\n"
                "正文：国务院办公厅关于印发有关行动方案的通知。")
         out = self.c.clean(doc)
-        self.assertEqual(out.count("索引号"), 1, "同标签只应保留首次")
-        self.assertEqual(out.count("发文机关"), 1)
+        # 网页字段表(标签行/值行)整体删除; 正文必须留存
+        self.assertEqual(out.count("索引号"), 0, "字段表标签行应整行删")
+        self.assertEqual(out.count("发文机关"), 0)
         self.assertIn("正文", out)
+
+    def test_bare_ui_label_lines_dropped(self):
+        """只剩界面标签、不带值的行(截图 OCR / markdown 化后常见)"""
+        doc = "正文段落示例文字，说明有关工作要求。\n链接：\n**下载链接：**\n#### 发文字号\n后续正文段落。"
+        out = self.c.clean(doc)
+        self.assertNotIn("下载链接", out)
+        self.assertNotIn("发文字号", out)
+        self.assertIn("正文段落示例文字", out)
+        self.assertIn("后续正文段落", out)
+
+    def test_bare_size_word_must_not_corrupt_body(self):
+        """裸词"超大"曾把正文改成"我国规模市场优势" —— 断言正文完好"""
+        s = "要充分发挥我国超大规模市场优势，巩固外资在华发展信心。"
+        out = self.c.clean(s)
+        self.assertIn("超大规模市场优势", out)
 
     def test_zhanghao_variants_removed(self):
         for v in ("字号：默认超大", "字号：默认大更大", "字号：默认大", "字号：默认更大"):
