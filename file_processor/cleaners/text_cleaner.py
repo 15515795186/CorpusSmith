@@ -74,13 +74,16 @@ _UI_PHRASES = (
     '想要使用其他格式？', '发生了一些错误返回', '发生了一些错误',
     # 政务门户页眉/按钮文案(实测 reader 输出: "字号：默认大超大 | 打印 收藏 | 索引号：")
     # 注意: '收藏'/'打印' 是正常词汇(实测误删过 "国家美术发展和收藏工程"), 只能走行级规则
-    '字号：默认大超大', '字号：默认大更大', '大超大',
+    '字号：默认大超大', '字号：默认大更大', '字号：默认超大', '字号：默认更大',
+    '字号：默认大', '字号：默认小', '大超大', '大更大', '超大',
 )
 _UI_PHRASES_RE = re.compile(
     r'(?m)(?:本作品来自[^。\n]{0,40}。依据[^。\n]{0,80}属于公有领域。'
     r'|^Category[:：][^\n]*$'
     r'|Category[:：]\s?[^\s，。；、\n]{1,40}'
-    r'|^下载(?=[\u4e00-\u9fff""][\u4e00-\u9fff""（）()0-9]{1,30}$))')
+    r'|^下载(?=[\u4e00-\u9fff""][\u4e00-\u9fff""（）()0-9]{1,30}$)'
+    # 字号控件(含被 HTML 标签劈开的碎片: "字号：默认</div><div>大超大" → 去标签后只剩 "字号：默认")
+    r'|字号\s*[:：]\s*默认\s*[大超大更中小]{0,3})')
 # 政务门户面包屑("首页 > 政策 > 国务院政策文件库 > 国务院文件"): 只剥"段 > 段"前缀。
 # 历史缺陷: 初版正则连带吞掉了正文("首页&nbsp;&gt;&nbsp;政策文件" 被吃成 "文件"),
 # 故改为逐段匹配(每段 ≤12 个汉字, 以 '>' 收尾), 剩余为空或纯界面词时才整行删。
@@ -124,6 +127,87 @@ _SNAPSHOT_CHROME_RE = re.compile(
 # 代价: "state-of-the-art" 会成为 "stateof-the-art"、"Common-sense" → "Commonsense", 量极少。
 _HYPHEN_KEEP = frozenset(('self', 'non', 'multi', 'cross'))
 
+# ---------- 政务门户页面残留(实测取证: 全库 7~8 份 / 13~15 处) ----------
+# 形态一: 页脚块(常整块重复两遍, 同一行内)
+#   "关于本网网站声明联系我们网站纠错主办单位：国务院办公厅 运行维护单位： 运行中心
+#    版权所有： 中文域名： .政务网站标识码bm01001 京ICP备05070218号 京公网安备…国务院客户端…
+#    微博、微信…回到顶部注册链接：全国人大全国政协国家监察委员会…驻外机构"
+_PORTAL_FOOTER_STRONG = ('网站标识码', 'ICP备', '公网安备', '国务院客户端', '版权所有',
+                         '关于本网', '网站声明', '网站纠错', '中文域名', '回到顶部',
+                         '运行维护单位', '主办单位')
+_PORTAL_FOOTER_WEAK = ('联系我们', '微博', '微信', '注册', '驻外机构', '全国人大', '全国政协',
+                       '地方政府网站', '国务院部门网站', '驻港澳机构网站', '最高人民法院',
+                       '最高人民检察院', '国家监察委员会', '中国政府网')
+
+# 形态二: 元数据标签网格(gov.cn 页面字段表, 常整行无换行、重复两遍)
+#   "标 题：…通知发文机关：…发文字号：工信部联原〔2024〕136号来 源：…主题分类：…
+#    公文种类：通知成文日期：2024年07月02日" (再重复一遍)
+_META_LABELS = ('标 题', '标题', '发文机关', '发文字号', '来 源', '主题分类', '公文种类',
+                '成文日期', '索引号', '发布日期', '废止日期', '有效性', '主 题 词',
+                '公开责任部门', '所属机构', '内容概述')
+_META_ALT = '|'.join(re.escape(lab).replace(r'\ ', r'\s*') for lab in _META_LABELS)
+_META_LABEL_SEARCH = [(lab, re.compile(re.escape(lab).replace(r'\ ', r'\s*') + r'\s*[:：]'))
+                      for lab in _META_LABELS]
+_META_PAIR_RE = re.compile(
+    rf'(?:{_META_ALT})\s*[:：][^\n]{{0,300}}?(?=(?:{_META_ALT})\s*[:：]|$)')
+
+
+# 政务门户页脚/侧栏的机构导航词(整行只由这些词构成即判为链接行)
+_PORTAL_NAV_TOKENS = ('全国人大', '全国政协', '国家监察委员会', '最高人民法院', '最高人民检察院',
+                      '国务院部门网站', '地方政府网站', '驻港澳机构网站', '驻外机构', '驻外机构网站',
+                      '中国政府网', '国务院客户端', '国务院客户端小程序', '国家政务服务平台')
+
+
+_NAV_TOKENS_BY_LEN = tuple(sorted(_PORTAL_NAV_TOKENS, key=len, reverse=True))
+
+
+def _is_portal_nav_line(line: str) -> bool:
+    """整行只由机构导航名(+分隔符)构成 → 页脚/侧栏链接行
+
+    实测形态: "- | 地方政府网站" / "- | 最高人民检察院国务院部门网站" / "### 医务部门网站 | 地方政府网站"。
+    判据是"全覆盖": 把已知导航词逐个剥掉后若不再剩实质文字则命中 —— 因此
+    "地方政府网站管理办法" 这类含实义的正文行不会被删。
+    """
+    core = re.sub(r'^[#>|\-*\s]+', '', line).strip()
+    core = re.sub(r'[|\-—·、,，/\\\s]+', '', core)
+    if not core:
+        return False
+    for _ in range(12):
+        before = core
+        for tok in _NAV_TOKENS_BY_LEN:          # 最长优先: '驻外机构网站' 先于 '驻外机构'
+            if core.startswith(tok):
+                core = core[len(tok):]
+        if core == before:
+            break
+    return not core
+
+
+def _is_portal_footer_line(line: str) -> bool:
+    """整行门户页脚残留
+
+    实测两种行形态:
+      ① 多标记长行: "网站标识码bm01001 京ICP备05070218号 京公网安备…回到顶部注册" 或
+         "链接：全国人大全国政协…驻外机构"  → 强标记 + 任一其他标记, 或 ≥3 个标记
+      ② 单标记短行(整块页脚被拆行): "驻外机构" / "关于本网" / "网站声明" /
+         "网站标识码bm01001" / "京ICP备05070218号"  → 强标记且行 ≤60 字符
+    阈值收紧以防误伤正文(正文句子里出现单个"联系我们"不得被删)。
+    """
+    strong = any(m in line for m in _PORTAL_FOOTER_STRONG)
+    n_all = sum(1 for m in _PORTAL_FOOTER_STRONG + _PORTAL_FOOTER_WEAK if m in line)
+    if (strong and n_all >= 2) or n_all >= 3:
+        return True
+    if strong and len(line) <= 60:            # ② 单标记短行(页脚被拆行)
+        return True
+    return _is_portal_nav_line(line)          # ③ 整行只由机构导航名构成
+
+
+def _strip_meta_grid(line: str) -> str:
+    """元数据网格行 → 摘掉全部"标签：值"对(仅当该行含 ≥2 个字段标签, 防误伤"数据来源：…"这类正文)"""
+    n_labels = sum(1 for _, rex in _META_LABEL_SEARCH if rex.search(line))
+    if n_labels < 2:
+        return line
+    return re.sub(r'\s{2,}', ' ', _META_PAIR_RE.sub('', line)).strip()
+
 
 class TextCleaner:
     """通用文本清洗"""
@@ -148,11 +232,20 @@ class TextCleaner:
         text = self._unwrap_markup_dump(text)            # 截图 OCR 的 HTML 转储 → 纯文本
         text = self._fix_ligatures_and_diacritics(text)  # 连字/坏变音符(须在断行修复前)
         text = self._strip_snapshot_chrome(text)         # 网页稿元数据头/站点导航残留
+        text = self._strip_portal_residue(text)         # 门户页脚块/元数据标签网格/字号
         text = self._normalize_whitespace(text)
         text = self._remove_ui_boilerplate(text)
         text = self._fix_line_breaks(text)
+        # 页脚链接墙在原文里每行一个机构名(单词弱标记), 断行修复会把它们拼成一整行,
+        # 故此处必须再清一次 —— 拼接后同行星级标记数才够触发整行删除。
+        text = self._strip_portal_residue(text)
         text = self._remove_urls_and_emails(text)
         text = self._remove_garbage_lines(text)
+        text = self._drop_duplicate_lines(text)          # 整行重复块(抓取重复粘贴)
+        # 截图 OCR 的 HTML 转储里 "字号：默认</div><div>大更大" 这类被标签劈开的界面碎片,
+        # 只有去掉标签后才会拼回完整短语 —— 故此处必须再清一遍界面残留与门户残留。
+        text = self._remove_ui_boilerplate(text)
+        text = self._strip_portal_residue(text)
         text = self._normalize_punctuation(text, language)
         text = self._collapse_repeated_chars(text)
         text = text.strip()
@@ -312,6 +405,56 @@ class TextCleaner:
             if broken in text:
                 text = text.replace(broken, fixed)
         return text
+
+    def _strip_portal_residue(self, text: str) -> str:
+        """政务门户页面残留: 页脚块 / 元数据标签网格 / 字号控件文案
+
+        实测(全库 80 份): 7~8 份 txt/html 残留整块页脚("网站标识码/京ICP备/国务院客户端/
+        回到顶部…", 且同文档内重复两遍), 14~18 份残留页面字段表("标 题：…发文机关：…
+        发文字号：…", 单行无换行、同样重复)。这些是网页模板而非文档内容, 质检会判
+        "结构混乱/非正文干扰信息严重"。
+        """
+        out = []
+        seen_labels = set()
+        for line in text.split('\n'):
+            s = line.strip()
+            if not s:
+                out.append(line)
+                continue
+            if _is_portal_footer_line(s):
+                continue
+            # 形态三: 每行一个字段标签(OCR 截图/扫描件常见, 如 "### 索引号：…")。
+            # 同标签只保留首次 —— 质检点名的是"元数据重复出现至少 N 次", 单次出现属正常元数据。
+            core = re.sub(r'^[#>\-*\s|]+', '', s)
+            labels_here = [lab for lab, rex in _META_LABEL_SEARCH if rex.match(core)]
+            if labels_here and labels_here[0] in seen_labels:
+                continue
+            seen_labels.update(labels_here)
+            s2 = _strip_meta_grid(s)          # 形态二: 单行内多标签网格
+            if not s2:
+                continue
+            for lab, rex in _META_LABEL_SEARCH:
+                if rex.search(s2):
+                    seen_labels.add(lab)
+            out.append(s2)
+        return '\n'.join(out)
+
+    def _drop_duplicate_lines(self, text: str) -> str:
+        """整行重复块去重(保留首次): 抓取常把同一段通知/标题整块粘贴多次
+
+        只做"完全相同的长行"(归一空白后 ≥30 字符)才丢, 短行/表格表头不动 —— 实测
+        重复的是整块正文(单行长文本), 阈值取 30 可避免误删正常的并列条目。
+        """
+        seen = set()
+        out = []
+        for line in text.split('\n'):
+            key = re.sub(r'\s+', '', line)
+            if len(key) >= 30:
+                if key in seen:
+                    continue
+                seen.add(key)
+            out.append(line)
+        return '\n'.join(out)
 
     def _strip_snapshot_chrome(self, text: str) -> str:
         """网页稿元数据头 + 站点导航残留

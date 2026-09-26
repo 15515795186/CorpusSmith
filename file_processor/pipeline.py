@@ -524,7 +524,10 @@ class FileProcessorPipeline:
                 logger.info("  淘汰: %s (总分 %d/25) - %s",
                             source, score.total_score,
                             "; ".join(score.issues[:2]) or "")
-                self._record_rejection(source, "quality", "low_score", text)
+                self._record_rejection(
+                    source, "quality",
+                    "low_score: " + ("; ".join(score.issues[:2]) or f"总分 {score.total_score}/25"),
+                    text)
 
         report = self.quality_scorer.generate_report(scored, self.formatter.get_report_path())
 

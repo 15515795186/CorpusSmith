@@ -414,5 +414,99 @@ class ExtractionNoiseTest(unittest.TestCase):
         self.assertEqual(self.cleaner.clean(text), text)
 
 
+
+
+class PortalResidueTest(unittest.TestCase):
+    """政务门户页面残留(实测取证: 7~8 份页脚块、14~18 份元数据网格; 均整块重复两遍)"""
+
+    FOOTER = ("关于本网网站声明联系我们网站纠错主办单位：国务院办公厅 运行维护单位： 运行中心"
+              "版权所有： 中文域名： .政务网站标识码bm01001 京ICP备05070218号 "
+              "京公网安备11010202001号国务院客户端国务院客户端小程序微博、微信电脑版客户端小程序"
+              "微博微信注册网站纠错主办单位：国务院办公厅 运行维护单位： 运行中心版权所有： "
+              "中文域名： .政务网站标识码bm01001京ICP备05070218号 京公网安备11010202001号回到顶部注册")
+
+    def setUp(self):
+        self.c = TextCleaner()
+
+    def test_portal_footer_line_dropped(self):
+        out = self.c.clean("政务要闻正文示例，说明有关工作的总体安排。\n\n" + self.FOOTER + "\n\n后续说明文字。")
+        self.assertNotIn("网站标识码", out)
+        self.assertNotIn("京ICP备", out)
+        self.assertNotIn("国务院客户端", out)
+        self.assertIn("政务要闻正文示例", out)
+
+    def test_footer_link_wall_and_top_dropped(self):
+        line = "链接：全国人大全国政协国家监察委员会最高人民法院最高人民检察院国务院部门网站地方政府网站驻港澳机构网站驻外机构"
+        out = self.c.clean("正文内容示例。\n" + line + "\n结尾。")
+        self.assertNotIn("驻外机构", out)
+        self.assertIn("正文内容示例", out)
+
+    def test_split_footer_fragment_lines_dropped(self):
+        """整块页脚在 txt/html 里常被拆成多行, 每行只带一个标记"""
+        doc = ("正文段落示例文字。\n驻外机构\n关于本网\n网站声明\n"
+               "主办单位：国务院办公厅 运行维护单位：中国政府网运行中心\n"
+               "网站标识码bm01000001 京ICP备05070218号 京公网安备11010202000001号\n"
+               "国务院客户端\n网站标识码bm01001\n回到顶部\n后续正文段落。")
+        out = self.c.clean(doc)
+        for frag in ("驻外机构", "关于本网", "网站声明", "网站标识码", "京ICP备", "国务院客户端", "回到顶部"):
+            self.assertNotIn(frag, out, frag)
+        self.assertIn("正文段落示例文字", out)
+        self.assertIn("后续正文段落", out)
+
+    def test_nav_link_lines_dropped(self):
+        """footer 侧栏链接行(整行只由机构名构成, 常带 - | ### 前缀)"""
+        doc = ("正文示例。\n- | 最高人民检察院国务院部门网站\n- | 地方政府网站\n"
+               "- | 驻港澳机构网站\n### 医务部门网站 | 地方政府网站 | 驻港澳机构网站 | 驻外机构\n"
+               "地方政府网站管理办法由本级政府办公厅负责解释。")
+        out = self.c.clean(doc)
+        self.assertNotIn("驻港澳机构网站", out)
+        self.assertNotIn("驻外机构", out)
+        self.assertIn("地方政府网站管理办法", out, "含实义的正文行不得被删")
+
+    def test_weak_footer_word_alone_kept(self):
+        """只出现一个弱标记(联系我们)的正常句子不得被删"""
+        line = "如需了解申报细节，请联系我们并查阅办事指南第三部分。"
+        out = self.c.clean(line)
+        self.assertIn("办事指南", out)
+
+    def test_inline_metadata_grid_stripped(self):
+        grid = ("标 题：工业和信息化部等九部门关于印发《精细化工产业创新发展实施方案（2024—2027年）》的通知"
+                "发文机关：工业和信息化部 国家发展改革委 财政部 生态环境部"
+                "发文字号：工信部联原〔2024〕136号来 源：工业和信息化部网站"
+                "主题分类：工业、交通\\其他公文种类：通知成文日期：2024年07月02日")
+        out = self.c.clean(grid + "\n\n各省、自治区、直辖市主管部门：现将方案印发给你们。")
+        for lab in ("标 题：", "发文机关：", "发文字号：", "来 源：", "主题分类：", "成文日期："):
+            self.assertNotIn(lab, out)
+        self.assertIn("现将方案印发给你们", out)
+
+    def test_legit_source_line_kept(self):
+        """正文里的"数据来源：…"是单标签, 不得被当成页面网格删掉"""
+        s = "本年度统计口径调整如下。数据来源：国家统计局年度公报，2024。"
+        out = self.c.clean(s)
+        self.assertIn("国家统计局", out)
+
+    def test_repeated_label_line_keeps_first_only(self):
+        doc = ("### 索引号：000014349/2024-00028\n### 发文机关：国务院办公厅\n"
+               "### 索引号：000014349/2024-00028\n### 发文机关：国务院办公厅\n"
+               "正文：国务院办公厅关于印发有关行动方案的通知。")
+        out = self.c.clean(doc)
+        self.assertEqual(out.count("索引号"), 1, "同标签只应保留首次")
+        self.assertEqual(out.count("发文机关"), 1)
+        self.assertIn("正文", out)
+
+    def test_zhanghao_variants_removed(self):
+        for v in ("字号：默认超大", "字号：默认大更大", "字号：默认大", "字号：默认更大"):
+            out = self.c.clean(f"工业和信息化部关于印发有关方案的通知{v}\n\n正文内容。")
+            self.assertNotIn("默认", out, v)
+
+    def test_long_duplicate_line_deduped_short_kept(self):
+        longline = "各省、自治区、直辖市及计划单列市工业和信息化主管部门，有关中央企业：现将实施方案印发给你们，请结合实际认真抓好落实。"
+        # 首行须以句末标点收尾, 否则会被断行修复与下一行合并成不同文本, 掩盖重复
+        doc = "标题行。\n" + longline + "\n" + longline + "\n" + "①②\n" + "①②\n"
+        out = self.c.clean(doc)
+        self.assertEqual(out.count("现将实施方案印发给你们"), 1, "完全相同的长行只保留首次")
+        self.assertEqual(out.count("①②"), 2, "短行(未达 30 字符)不做去重")
+
+
 if __name__ == "__main__":
     unittest.main()
