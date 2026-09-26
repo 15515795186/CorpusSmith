@@ -99,5 +99,67 @@ class TestCOTRetry(unittest.TestCase):
         self.assertEqual(samples, [])
 
 
+
+
+class TestCOTExtractiveSeed(unittest.TestCase):
+    """模板未命中(英文散文/无结构材料)时按 skill 抽取式兜底生成问答对。
+
+    回归点: 旧实现把 COT 的 LLM 通道锁在中文模板种子上, 种子为空即一次都不调用
+    → 英文扫描件/散文整份零产出(实测 11 份)。
+    """
+
+    EN_PROSE = (
+        "Meteorology is the study of the atmosphere and its phenomena. "
+        "Weather forecasts are produced by numerical models that solve the equations "
+        "of motion and thermodynamics. Observations from surface stations, radiosondes "
+        "and satellites feed these models. Forecasters must interpret the output "
+        "carefully and they should compare the guidance with local observations."
+    )
+    EN_CHAIN = (
+        "1. The material defines meteorology as the study of the atmosphere and its phenomena.\n"
+        "2. It states that forecasts come from numerical models fed by observations from "
+        "surface stations, radiosondes and satellites.\n"
+        "3. It advises that forecasters interpret the output carefully and compare the "
+        "guidance with local observations.\n"
+        "因此结论是: Meteorology is the study of the atmosphere and its phenomena."
+    )
+
+    def test_english_prose_has_no_template_seed(self):
+        ic = InstructionConverter(max_samples=5)
+        seeds = ic._generate_from_templates(self.EN_PROSE, make_result(self.EN_PROSE))
+        self.assertEqual(seeds, [], "前提: 该英文散文无模板命中")
+
+    def test_llm_channel_still_runs_without_template_seed(self):
+        gen = FakeGenerator([self.EN_CHAIN])
+        cc = COTConverter(llm_generator=gen, llm_max_attempts=1)
+        samples = cc._generate_cot_with_llm(self.EN_PROSE, make_result(self.EN_PROSE),
+                                            task_type="建议")
+        self.assertGreaterEqual(gen.call_count, 1, "模板为空时必须仍调用 LLM(抽取式兜底)")
+        self.assertGreaterEqual(len(samples), 1, "英文散文应能产出 COT 样本")
+        s0 = samples[0]
+        for k in ("instruction", "input", "chain_of_thought", "output", "task_type"):
+            self.assertIn(k, s0)
+        self.assertEqual(s0["task_type"], "建议")
+        self.assertTrue(s0["input"], "抽取式种子的 input 必须是材料节选")
+
+    def test_seed_is_english_for_english_material(self):
+        cc = COTConverter()
+        seed = cc._extractive_seed(self.EN_PROSE, "en", "建议")
+        self.assertIn("material", seed["instruction"])
+        seed_zh = cc._extractive_seed(
+            "本方案要求各地区加强统筹协调，落实重点任务，健全工作机制，确保各项措施落地见效。",
+            "zh", "建议")
+        self.assertIn("材料", seed_zh["instruction"])
+
+    def test_chinese_unstructured_text_also_seeded(self):
+        # 中文无结构散文(无标题/编号)同样走兜底
+        txt = ("相关机制的原理在于热量传导，随着温差增大传导速度提升，"
+               "热量会从高温区域向低温区域持续流动。")
+        gen = FakeGenerator([self.EN_CHAIN])
+        cc = COTConverter(llm_generator=gen, llm_max_attempts=1)
+        cc._generate_cot_with_llm(txt, make_result(txt), task_type="解释")
+        self.assertGreaterEqual(gen.call_count, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

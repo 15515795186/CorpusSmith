@@ -283,5 +283,46 @@ class NumberedListSampleTest(unittest.TestCase):
         self.assertEqual(enum, [], "短标题目录不应生成列举样本")
 
 
+
+
+class COTClassifyBilingualTest(unittest.TestCase):
+    """四类预判按 skill 决策表实现, 中英文同一套语义特征(此前英文形态缺失 → 整类判空)"""
+
+    EN_REASON_MATH = "The cost is 12 + 30 = 42 dollars in total. Hence the figure rises."
+    EN_REASON_LOGIC = ("If the sensor fails, then the backup unit takes over within "
+                       "two seconds, so the system stays online.")
+    EN_REASON_COUNT = ("1. Surface stations report hourly.\n2. Radiosondes sample the "
+                       "column twice a day.\n3. Satellites fill the gaps over oceans.\n"
+                       "The total number of observing systems used is 3.")
+    EN_EXPLAIN = ("Meteorology is defined as the study of the atmosphere. This section "
+                  "explains why convection forms clouds and the mechanism behind it.")
+    EN_ADVICE = ("Forecasters should verify each model run. Operators must log every "
+                 "alert. The guidelines also recommend checking instruments daily.")
+    EN_COMPARE = ("Compared with radiosondes, satellites cover far more area. The "
+                  "difference between the two methods matters when choosing an approach.")
+
+    def _cls(self, text):
+        return COTConverter()._classify_text(text)
+
+    def test_english_reasoning_signals(self):
+        self.assertEqual(self._cls(self.EN_REASON_MATH), "推理")
+        self.assertEqual(self._cls(self.EN_REASON_LOGIC), "推理")
+        self.assertEqual(self._cls(self.EN_REASON_COUNT), "推理")
+
+    def test_english_other_categories(self):
+        self.assertEqual(self._cls(self.EN_EXPLAIN), "解释")
+        self.assertEqual(self._cls(self.EN_ADVICE), "建议")
+        self.assertEqual(self._cls(self.EN_COMPARE), "比较")
+
+    def test_priority_reasoning_beats_advice(self):
+        # 优先序 推理 > 解释 > 建议 > 比较: 含算式 + should 的文本归推理
+        self.assertEqual(self._cls("You should compute 3 * 4 = 12 before reporting."), "推理")
+
+    def test_chinese_unchanged(self):
+        # 中文行为不回归: 政策建议文 → 建议; 定义机制 → 解释
+        self.assertEqual(self._cls("本方案要求各省应当加强统筹协调，落实重点任务。"), "建议")
+        self.assertEqual(self._cls("该机制的原理是热传导，由于温差导致热量流动。"), "解释")
+
+
 if __name__ == "__main__":
     unittest.main()

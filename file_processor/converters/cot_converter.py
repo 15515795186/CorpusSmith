@@ -259,20 +259,37 @@ input 中可见的内容，节选本身不构成不合格项（不要因"材料�
     # 推理信号：显式算式 / 合计计数 / ≥3 条编号列表（清点可数）。目标数字（如
     # “下降13.5%”）不算推理信号——它是建议/政策文本的常客，误判会把政策文本
     # 整体归入推理类。
+    # 信号按 skill 决策表实现，**不区分语种**：同一套语义特征，中英各有对应形态
+    # （英文形态此前缺失 → 英文材料整类判空，见 commit 说明）。优先序不变：
+    # 推理 > 解释 > 建议 > 比较。
     _HINT_REASON = re.compile(
-        r'\d+\s*[+\-×xX*÷/]\s*\d+|[共合计]计?\s*[一二三四五六七八九十\d]+[个项条]')
+        r'\d+\s*[+\-×xX*÷/]\s*\d+|[共合计]计?\s*[一二三四五六七八九十\d]+[个项条]|'
+        r'\b(?:total|sum|altogether|how many)\b[^.\n]{0,40}?\d+|'
+        r'\b(?:therefore|hence|thus|it follows that|we can (?:conclude|derive|infer))\b|'
+        r'\bif\b[^.\n]{0,60}\bthen\b', re.IGNORECASE)
     _HINT_LIST = re.compile(
-        r'(?:^|\n)\s*[（(]?[一二三四五六七八九十]{1,3}[）)、.．]\s*\S')
+        r'(?:^|\n)\s*[（(]?[一二三四五六七八九十]{1,3}[）)、.．]\s*\S|'
+        r'(?:^|\n)\s*\d{1,3}[.)]\s+\S', re.IGNORECASE)   # ASCII 编号列表（英文材料常见）
     # 解释信号：定义/机制/因果句式
     _HINT_EXPLAIN = re.compile(
-        r'是指|指的是|意为|即[:：]?|原理|机制|原因|之所以|由于|为了.{0,20}(?:实现|达到|保障)')
+        r'是指|指的是|意为|即[:：]?|原理|机制|原因|之所以|由于|为了.{0,20}(?:实现|达到|保障)|'
+        r'\bwhat (?:is|are)\b|\brefers? to\b|\b(?:is|are) defined as\b|\bis called\b|\bknown as\b|'
+        r'\bwhy\b|\bhow does\b|\bmechanism\b|\bprinciple\b|\bcaused by\b|\bdue to\b|\bresults from\b',
+        re.IGNORECASE)
     # 建议信号：祈使/措施词 + 文件型结构词
     _HINT_ADVICE = re.compile(
         r'建议|应当|应(?:该|当)?(?:加强|推进|落实|开展|实施|优化|提升|加快|完善|健全|强化|保障)|'
-        r'专项行动|重点任务|总体目标|总体要求|工作要求|政策措施|行动方案')
+        r'专项行动|重点任务|总体目标|总体要求|工作要求|政策措施|行动方案|'
+        r'\bshould\b|\bmust\b|\bshall\b|\brecommend(?:s|ed|ation|ations)?\b|\badvise[ds]?\b|'
+        r'\baction plan\b|\bmeasures\b|\bguidelines?\b|\bensure that\b|\bbest practices?\b',
+        re.IGNORECASE)
     # 比较信号：对比句式
     _HINT_COMPARE = re.compile(
-        r'相比|对比|较之|优于|劣于|胜于|强于|不同于|区别(?:在于)?|差异|权衡|比[^。，,]{1,15}更(?:加)?[^。，,]{0,10}')
+        r'相比|对比|较之|优于|劣于|胜于|强于|不同于|区别(?:在于)?|差异|权衡|比[^。，,]{1,15}更(?:加)?[^。，,]{0,10}|'
+        r'\bcompared (?:with|to)\b|\bin comparison\b|\bversus\b|\bvs\.?(?=\s|$)|'
+        r'\bdifferences? (?:between|among)\b|\btrade-?offs?\b|'
+        r'\b(?:better|worse|faster|slower|cheaper|safer|more accurate) than\b|\badvantages? (?:of|over)\b',
+        re.IGNORECASE)
 
     def _classify_text(self, text: str) -> Optional[str]:
         """规则预判文本所属 COT 类别（优先级：推理 > 解释 > 建议 > 比较）。
@@ -710,6 +727,14 @@ input 中可见的内容，节选本身不构成不合格项（不要因"材料�
         from .instruction_converter import InstructionConverter
         ic = InstructionConverter(max_samples=5)
         instructions = ic._generate_from_templates(text, result)
+        if not instructions:
+            # 模板种子为空 → skill 的抽取式兜底(旧实现此处直接断链, 英文与无结构
+            # 材料整份零产出; 现在保证"有素材即可生成", 走同一条 LLM 链+硬校验)
+            seed = self._extractive_seed(text, language, task_type)
+            if seed:
+                logger.info("COT 模板种子为空 → 抽取式兜底(类别=%s): %s",
+                            task_type or "解释", source)
+                instructions = [seed]
 
         for inst in instructions[:3]:
             ok = False
@@ -799,6 +824,50 @@ input 中可见的内容，节选本身不构成不合格项（不要因"材料�
         "比较": ("真实样本风格(两条摘要哪个更好)：维度：信息完整性/简洁度/误导性；"
                  "逐项对比后给出取舍结论。"),
     }
+
+    # skill cot-dataset-generation: 模板未命中 ≠ 不能生成 —— 问答对由材料
+    # **抽取式**构造(每类固定问法 + 材料节选 + 材料首句作答案), 之后走同一条
+    # LLM 链与同一套硬校验。中英各一套问法(英文形态此前缺失, 导致英文散文/
+    # 扫描件整份零产出)。
+    _SEED_ASK = {
+        "推理": ("根据以下材料，清点其中总共列出了几个条目？请逐条核对并给出总数。",
+                 "Based on the following material, how many items are enumerated "
+                 "in total? Check each item and give the count."),
+        "解释": ("根据以下材料，解释其中涉及的概念或机制。",
+                 "Based on the following material, explain the concept or "
+                 "mechanism it describes."),
+        "建议": ("根据以下材料，提出具体可操作的建议。",
+                 "Based on the following material, give concrete actionable "
+                 "recommendations."),
+        "比较": ("根据以下材料，比较其中提到的对象，说明差异与适用情境。",
+                 "Based on the following material, compare the objects mentioned, "
+                 "explaining the differences and when each applies."),
+    }
+
+    @staticmethod
+    def _first_excerpt(text: str, limit: int) -> str:
+        """取材料开头到最近句末的一段（无句末标点时按 limit 截断）。"""
+        t = (text or "").strip()
+        if len(t) <= limit:
+            return t
+        head = t[:limit]
+        cut = max(head.rfind(c) for c in "。！？!?.")
+        return head[:cut + 1] if cut >= 0 else head
+
+    def _extractive_seed(self, text: str, language: str,
+                         task_type: Optional[str] = None) -> Optional[Dict]:
+        """抽取式问答对（模板通道未命中时的兜底）：问法按类别固定，答案取材料
+        首句、材料节选作 input —— 全部来自材料原文，不引入任何生成内容。"""
+        t = (text or "").strip()
+        if len(t) < 30:
+            return None
+        tt = task_type if task_type in self._SEED_ASK else "解释"
+        ask_zh, ask_en = self._SEED_ASK[tt]
+        return {
+            "instruction": ask_zh if language == "zh" else ask_en,
+            "input": self._first_excerpt(t, 600),
+            "output": self._first_excerpt(t, 200),
+        }
 
     def _build_cot_prompt(self, instruction: str, output: str,
                           context: str, language: str,

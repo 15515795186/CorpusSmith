@@ -149,6 +149,10 @@ def code_exec_check(text: str, expected_output: str = ''):
 
 # ============ LLM 输出截断兜底（max_tokens 截断防毒样本）============
 _SENT_END = '。！？!?…'
+_CJK_RE = re.compile(r'[\u4e00-\u9fff]')
+# 拉丁文本(无汉字)把 "." 也算句末: 英文完整句以句点收尾, 若不认则
+# 英文单句 output/推理链被判"截断"整条丢弃(实测踩到); 含汉字的中文
+# 文本仍只用原集合, 免得在 "13.5" 这类数字处误裁。
 
 
 def trim_incomplete_output(output: str, min_len: int = 30):
@@ -164,7 +168,10 @@ def trim_incomplete_output(output: str, min_len: int = 30):
     if not output:
         return None
     o = output.strip()
-    if o[-1] in _SENT_END:
+    # 句末判定: 中文标点一律认; "." 只在"尾部无汉字"时认 —— 英文完整句以句点
+    # 收尾(中英混排的推理链尾部通常就是英文句), 而中文文本里的 "13." 不算句末。
+    latin_tail = not _CJK_RE.search(o[-30:])
+    if o[-1] in _SENT_END or (latin_tail and o[-1] == "."):
         return o
     lines = [l.strip() for l in o.split('\n') if l.strip()]
     if len(lines) >= 2 and max(len(l) for l in lines) <= 40:
@@ -180,7 +187,8 @@ def trim_incomplete_output(output: str, min_len: int = 30):
             break
         out = '\n'.join(lines).strip()
         return out if out else None
-    cut = max((pos for pos in (o.rfind(c) for c in '。！？!?') if pos >= 0), default=-1)
+    ends = _SENT_END + ("." if not _CJK_RE.search(o) else "")
+    cut = max((pos for pos in (o.rfind(c) for c in ends) if pos >= 0), default=-1)
     if cut >= min_len:
         return o[:cut + 1]
     return None
