@@ -65,7 +65,11 @@ class FileProcessorPipeline:
         self._t0 = time.time()
         self.rejections: Counter = Counter()
         self.rejected_path = os.path.join(config.output_dir, "rejected.jsonl")
+        # 质量评分"API/网络错误"来源单独落盘: 与"真低质淘汰"区分开 ——
+        # 断网时被误淘汰的来源可按此清单定点补跑, 不必整轮重评
+        self.quality_api_error_path = os.path.join(config.output_dir, "quality_api_error.jsonl")
         self._rejected_file = None
+        self._api_error_file = None
 
         # Qwen-VL OCR 读取器（截图 + 扫描PDF）
         self.qwen_ocr = QwenVLOcrReader(
@@ -503,13 +507,20 @@ class FileProcessorPipeline:
 
         passed_results = []
         for i, (text, score, source) in enumerate(scored):
+            if score.error:
+                # 调用失败(网络/限流/超时)或响应无法解析: 不是"低质", 单独留证待重跑救回
+                logger.warning("  评分异常(不作低质淘汰, 待重跑救回): %s - %s", source, score.error)
+                self._record_api_error(source, score.error, text)
+                self._record_rejection(source, "quality_api_error", score.error, text)
+                self.stats.quality_api_errors += 1
+                continue
             if score.passed:
                 passed_results.append(results[i])
             else:
                 logger.info("  淘汰: %s (总分 %d/25) - %s",
                             source, score.total_score,
-                            "; ".join(score.issues[:2]) or score.error or "")
-                self._record_rejection(source, "quality", score.error or "low_score", text)
+                            "; ".join(score.issues[:2]) or "")
+                self._record_rejection(source, "quality", "low_score", text)
 
         report = self.quality_scorer.generate_report(scored, self.formatter.get_report_path())
 
@@ -585,6 +596,8 @@ class FileProcessorPipeline:
                 "chunk_overlap": self.config.chunk_overlap,
                 "enable_llm": self.config.enable_llm,
                 "quality_enabled": self.quality_scorer is not None,
+                "quality_api_errors": self.stats.quality_api_errors,
+                "quality_api_error_path": os.path.basename(self.quality_api_error_path),
                 "resume": self.config.resume,
             },
         )
@@ -616,6 +629,9 @@ class FileProcessorPipeline:
         if self._rejected_file is not None:
             self._rejected_file.close()
             self._rejected_file = None
+        if self._api_error_file is not None:
+            self._api_error_file.close()
+            self._api_error_file = None
 
     def _previous_deterministic_rejections(self) -> set:
         """上轮 rejected.jsonl 中"确定性丢弃"（filter 阶段 / clean 空文本）的来源集合
@@ -648,6 +664,28 @@ class FileProcessorPipeline:
             logger.warning("[Resume] 读取 %s 失败: %s", self.rejected_path, e)
         return out
 
+    def _record_api_error(self, source: str, error: str, text: str = ""):
+        """记录"评分调用失败(网络/限流/超时)"的来源 —— 与真低质淘汰分开
+
+        断网只在当轮少这份语料(不放行未评分的文本进数据集), 但它不进
+        _previous_deterministic_rejections(那是 filter/clean 阶段的判据),
+        故 resume 重跑会自动重评救回。
+        """
+        try:
+            if self._api_error_file is None:
+                os.makedirs(os.path.dirname(os.path.abspath(self.quality_api_error_path)) or ".", exist_ok=True)
+                mode = "a" if self.config.resume else "w"
+                self._api_error_file = open(self.quality_api_error_path, mode, encoding="utf-8")
+            self._api_error_file.write(json.dumps({
+                "source": source,
+                "error": (error or "")[:300],
+                "chars": len(text or ""),
+                "ts": datetime.now().isoformat(timespec="seconds"),
+            }, ensure_ascii=False) + "\n")
+            self._api_error_file.flush()
+        except OSError as e:
+            logger.warning("记录评分异常来源失败: %s", e)
+
     def _write_run_report(self, files: List[str], cleaned_results: List[ReaderResult]):
         skipped = getattr(self, "files_skipped_resume", 0)
         report = {
@@ -668,6 +706,9 @@ class FileProcessorPipeline:
                 "score_errors": self.stats.ppl_errors,
             },
             "rejection_reasons": dict(self.rejections.most_common()),
+            # 断网/限流导致的评分失败: 与"真低质淘汰"分开, 按清单定点补跑即可
+            "quality_api_errors": self.stats.quality_api_errors,
+            "quality_api_error_path": os.path.basename(self.quality_api_error_path),
             "exact_duplicate_samples_skipped": self.formatter.duplicates_skipped,
             "language_dist": dict(self.stats.language_dist.most_common()),
             "total_tokens_est": self.stats.total_tokens_est,

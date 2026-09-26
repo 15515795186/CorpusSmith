@@ -214,5 +214,102 @@ class PipelineEndToEndTest(unittest.TestCase):
         self.assertEqual(pipeline._scan_files(), [])
 
 
+
+
+class QualityApiErrorTest(unittest.TestCase):
+    """评分调用失败(断网/限流/超时) ≠ 真低质淘汰
+
+    断网只在当轮少这份语料(未评分的文本不得放行), 但要单独留证:
+      ① quality_api_error.jsonl 列出待救回来源
+      ② rejected.jsonl 的 stage=quality_api_error
+      ③ 不进 resume 的"确定性丢弃"集合 → 重跑自动重评救回
+    """
+
+    def _pipeline(self, stub):
+        tmp = workspace_tempdir()
+        self.addCleanup(cleanup, tmp)
+        txt_dir = os.path.join(tmp, "txt")
+        os.makedirs(txt_dir)
+        with open(os.path.join(txt_dir, "a.txt"), "w", encoding="utf-8") as f:
+            f.write(TXT_A)
+        config = ProcessorConfig()
+        config.input_dirs = {"txt": txt_dir}
+        config.output_dir = os.path.join(tmp, "out")
+        config.cache_dir = os.path.join(tmp, "cache")
+        config.quality_enabled = True
+        config.enable_ppl_filter = False
+        config.output_types = ["pretrain"]
+        config.max_workers = 1
+        p = FileProcessorPipeline(config)
+        p.quality_scorer = stub          # 绕开 API: 直接注入桩
+        return p
+
+    def test_api_error_source_kept_for_retry(self):
+        from file_processor.quality_scorer import QualityScore
+
+        class StubError:
+            def score_batch(self, texts, sources, progress_callback=None):
+                return [(t, QualityScore(passed=False, issues=[], error="Connection error"), s)
+                        for t, s in zip(texts, sources)]
+
+            def generate_report(self, scored, path):
+                return {"passed": 0, "failed": len(scored), "api_errors": len(scored),
+                        "pass_rate_percent": 0.0}
+
+        p = self._pipeline(StubError())
+        p.run()
+
+        # ① 单独留证
+        api_path = os.path.join(p.config.output_dir, "quality_api_error.jsonl")
+        self.assertTrue(os.path.exists(api_path), "应生成 quality_api_error.jsonl")
+        with open(api_path, encoding="utf-8") as f:
+            recs = [json.loads(l) for l in f if l.strip()]
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0]["source"], "a.txt")
+        self.assertIn("Connection error", recs[0]["error"])
+
+        # ② 未评分的文本不得进数据集(零通过时输出文件不会创建)
+        out_path = os.path.join(p.config.output_dir, "pretrain", "data.jsonl")
+        written = []
+        if os.path.exists(out_path):
+            with open(out_path, encoding="utf-8") as f:
+                written = [json.loads(l) for l in f if l.strip()]
+        self.assertEqual([r["source"] for r in written if r.get("source") == "a.txt"], [])
+
+        # ③ stage 标注 + resume 可救回
+        with open(p.rejected_path, encoding="utf-8") as f:
+            rejected = [json.loads(l) for l in f if l.strip()]
+        stages = {r["stage"] for r in rejected}
+        self.assertIn("quality_api_error", stages)
+        self.assertNotIn("a.txt", p._previous_deterministic_rejections(),
+                         "断网来源不得进入跳过集合, 否则重跑不救回")
+
+        # ④ 报告计数
+        with open(os.path.join(p.config.output_dir, "run_report.json"), encoding="utf-8") as f:
+            report = json.load(f)
+        self.assertEqual(report["quality_api_errors"], 1)
+
+    def test_low_quality_rejection_is_not_api_error(self):
+        from file_processor.quality_scorer import QualityScore
+
+        class StubLowScore:
+            def score_batch(self, texts, sources, progress_callback=None):
+                return [(t, QualityScore(passed=False, total_score=8, issues=["模板化表达"]), s)
+                        for t, s in zip(texts, sources)]
+
+            def generate_report(self, scored, path):
+                return {"passed": 0, "failed": len(scored), "api_errors": 0,
+                        "pass_rate_percent": 0.0}
+
+        p = self._pipeline(StubLowScore())
+        p.run()
+        api_path = os.path.join(p.config.output_dir, "quality_api_error.jsonl")
+        self.assertFalse(os.path.exists(api_path), "真低质不应写进 api 错误清单")
+        with open(p.rejected_path, encoding="utf-8") as f:
+            rejected = [json.loads(l) for l in f if l.strip()]
+        self.assertEqual({r["stage"] for r in rejected}, {"quality"})
+        self.assertNotIn("a.txt", p._previous_deterministic_rejections())
+
+
 if __name__ == "__main__":
     unittest.main()

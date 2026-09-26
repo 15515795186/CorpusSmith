@@ -22,6 +22,7 @@ class StatsCollector:
         self.texts_filtered = 0
         self.ppl_filtered = 0          # 困惑度过滤淘汰的文本数
         self.ppl_errors = 0            # 困惑度打分异常(放行不淘汰)的文本数
+        self.quality_api_errors = 0    # 质量评分调用失败(网络/限流)的来源数
         self.duplicates_removed = 0
         self.cache_hits = 0
         self.pretrain_samples = 0
