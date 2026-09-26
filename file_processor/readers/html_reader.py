@@ -26,6 +26,29 @@ class HTMLReader(BaseReader):
     def can_handle(self, filepath: str) -> bool:
         return filepath.lower().endswith(('.html', '.htm', '.xhtml'))
 
+    # lxml 在部分页面上会整棵丢掉正文: 实测 gov.cn 源码 html
+    # BeautifulSoup(raw,'lxml').get_text()=188 字符 vs 'html.parser'=4517 字符,
+    # 正文全在 <p> 里却在 lxml 树中不存在 —— 8/10 份政务 html 语料因此零产出
+    # (reader 只吐出 "…_中国政府网EN个人中心退出邮箱无障碍EN" 这样的导航碎片)。
+    _MIN_ALT_RATIO = 0.02      # 提取文本 < 源文 2% → 视为解析异常
+    _BRANCH_MIN_CHARS = 300    # 通道提取量低于此值 → 怀疑通道误判
+
+    def _parse_html(self, html_content: str, label: str = "") -> BeautifulSoup:
+        """解析 HTML, 并在 lxml 明显丢正文时回退到 html.parser"""
+        soup = BeautifulSoup(html_content, 'lxml')
+        if len(html_content) < 2000:
+            return soup
+        got = len(soup.get_text().strip())
+        if got >= max(200, len(html_content) * self._MIN_ALT_RATIO):
+            return soup
+        alt = BeautifulSoup(html_content, 'html.parser')
+        alt_len = len(alt.get_text().strip())
+        if alt_len > got * 2:
+            logger.warning("lxml 解析丢正文(%d 字符 / 源 %d), 回退 html.parser(%d 字符): %s",
+                           got, len(html_content), alt_len, label or "?")
+            return alt
+        return soup
+
     def _is_screenshot_html(self, soup: BeautifulSoup) -> bool:
         """判断是否为截图类HTML（通过特征检测）"""
         html_str = str(soup)
@@ -198,7 +221,7 @@ class HTMLReader(BaseReader):
             with open(filepath, "r", encoding="utf-8", errors="replace") as f:
                 html_content = f.read()
 
-            soup = BeautifulSoup(html_content, 'lxml')
+            soup = self._parse_html(html_content, os.path.basename(filepath))
             is_screenshot = self._is_screenshot_html(soup)
 
             # 标题先提取：_extract_source_html 会移除整个 <head>
@@ -213,6 +236,20 @@ class HTMLReader(BaseReader):
                 text = self._extract_source_html(soup)
                 file_type = "html_source"
                 logger.info("Detected source HTML: %s", os.path.basename(filepath))
+
+            # 通道误判回退: 源码型政务页面带 position:absolute 内联样式, 会被判成截图 HTML,
+            # 而截图通道只拿到导航碎片; 两条通道都试, 取正文更多者(实测 8/10 份政务页).
+            if len(html_content) >= 2000 and len(text.strip()) < self._BRANCH_MIN_CHARS:
+                alt_soup = self._parse_html(html_content, os.path.basename(filepath))
+                alt_text = (self._extract_source_html(alt_soup) if is_screenshot
+                            else self._extract_screenshot_html(alt_soup))
+                if len(alt_text.strip()) > len(text.strip()) * 2:
+                    logger.warning("HTML 通道被判为 %s 但仅取到 %d 字符, 改用 %s 通道(%d 字符): %s",
+                                   file_type, len(text.strip()),
+                                   "html_source" if is_screenshot else "html_screenshot",
+                                   len(alt_text.strip()), os.path.basename(filepath))
+                    text, file_type = alt_text, ("html_source" if is_screenshot else "html_screenshot")
+                    is_screenshot = not is_screenshot
 
             return ReaderResult(
                 text=text,

@@ -42,7 +42,9 @@ import requests
 
 PKG_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DEST_DIR = os.path.join(PKG_ROOT, "data", "爬取语料", "版式pdf英文版")
-SRC_DIR = os.path.join(DEST_DIR, "_src")
+# 源 PDF 原件**必须放在语料目录之外**: 流水线的文件收集不认下划线约定(实测 _src/ 里
+# 10 份多页源件被当成语料扫进来 -> 待处理 90 份而不是 80 份), 故落在 data/_pipeline/ 下。
+SRC_DIR = os.path.join(PKG_ROOT, "data", "_pipeline", "scan_en_src")
 MANIFEST = os.path.join(DEST_DIR, "_manifest_scan_en.json")
 
 MIN_CHARS = 800           # 正文页门槛: 源页可提取文字

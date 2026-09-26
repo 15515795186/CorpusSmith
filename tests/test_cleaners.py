@@ -297,5 +297,122 @@ class FormTemplateFilterTest(unittest.TestCase):
         self.assertNotEqual(result.reason, "form_template_grid")
 
 
+class ExtractionNoiseTest(unittest.TestCase):
+    """提取噪声修复回归（质检淘汰复盘驱动）
+
+    本轮全量跑出 21 份淘汰样本，逐条核查理由后确认大部分是**提取/清洗缺陷**而非数据缺陷：
+      · 8/10 份英文 arXiv 文字层 PDF 被判"OCR 错误(taki ing / sett tings / J¨urgen)"
+        → 根因是清洗器断行规则把 "tak-\ning" 拼成 "taki" + 残行 "ng"（全库 4299 处跨行拼接候选）
+      · 4 份政务网页稿 txt 被判"混入大量 HTML/网页渲染残留(&nbsp;&gt;&nbsp;)"
+      · 2 份截图 OCR 被判"大量HTML标签和data-bbox属性残留"
+    另有 22/80 份带连字(ﬁ/ﬂ)与坏变音符残留。以下用例逐条守住修复。
+    """
+
+    def setUp(self):
+        self.cleaner = TextCleaner()
+
+    # ---- 断词（历史 bug: r'(\w)-\n(\w)' → r'\1\2\n\2' 只复制换行后一个字母）----
+    def test_hyphenated_line_break_merged(self):
+        out = self.cleaner.clean("formed by tak-\ning a random matrix", language="en")
+        self.assertIn("taking a random", out)
+
+    def test_no_fake_word_fragment_left(self):
+        """旧实现产出 "taki ing"（质检当成 OCR 错误点名）"""
+        out = self.cleaner.clean("formed by tak-\ning a random matrix", language="en")
+        self.assertNotIn("taki ing", out)
+        self.assertNotIn("\nng", out)
+
+    def test_real_hyphen_compound_kept(self):
+        self.assertIn("COVID-19",
+                      self.cleaner.clean("the COVID-\n19 pandemic", language="en"))
+        self.assertIn("self-attention",
+                      self.cleaner.clean("the self-\nattention layer", language="en"))
+
+    def test_prefix_whitelist_is_narrow(self):
+        """白名单只留 self-/non-/multi-/cross-: 虚词(in/be/an/re)是长词起始片段,
+        全库审计 115 处"保留"里约 95 处是假保留(in-formation / be-tween / an-swer)"""
+        self.assertIn("information",
+                      self.cleaner.clean("the in-\nformation is", language="en"))
+        self.assertIn("language",
+                      self.cleaner.clean("the lan-\nguage model", language="en"))
+        self.assertIn("non-parametric",
+                      self.cleaner.clean("a non-\nparametric test", language="en"))
+
+    # ---- 连字与坏变音符 ----
+    def test_ligatures_expanded(self):
+        out = self.cleaner.clean("di\ufb00erent and e\ufb03cient", language="en")
+        self.assertIn("different", out)
+        self.assertIn("efficient", out)
+
+    def test_broken_diacritic_repaired(self):
+        out = self.cleaner.clean("J\u00a8urgen Kurths", language="en")
+        self.assertIn("Jürgen", out)
+
+    def test_math_accents_untouched(self):
+        """ˆξ / ˜a 是 LaTeX 数学帽子与波浪号, 不能映射成字母"""
+        out = self.cleaner.clean("denote \u02c6\u03be and \u02dca as estimates", language="en")
+        self.assertIn("\u02c6\u03be", out)
+        self.assertIn("\u02dca", out)
+
+    def test_private_use_glyphs_removed(self):
+        """截图 OCR 把图标字体渲染成 U+E6xx 字形"""
+        out = self.cleaner.clean("收藏\ue68a 打印\ue603 正文内容在这里。", language="zh")
+        self.assertNotIn("\ue68a", out)
+        self.assertIn("正文内容在这里", out)
+
+    # ---- HTML 实体 / 网页稿 / OCR 转储 ----
+    def test_html_entities_decoded(self):
+        # 实体必须解码: 非面包屑位置的 ">" 正常出现, 实体本身不得残留
+        out = self.cleaner.clean("见&nbsp;&gt;&nbsp;第 3 节", language="zh")
+        self.assertIn(">", out)
+        self.assertNotIn("&nbsp;", out)
+        self.assertNotIn("&gt;", out)
+        self.assertIn("第 3 节", out)
+
+    def test_breadcrumb_line_dropped(self):
+        '''政务门户面包屑整行删除; 正文里的 '>' 不受影响'''
+        out = self.cleaner.clean("首页&nbsp;&gt;&nbsp;政策文件", language="zh")
+        self.assertEqual(out.strip(), "")
+        kept = self.cleaner.clean("见 > 第 3 节的内容说明。", language="zh")
+        self.assertIn("见 > 第 3 节", kept)
+
+    def test_snapshot_metadata_header_stripped(self):
+        text = ("来源: https://zwgk.example.gov.cn/x.html\n"
+                "标题: 202405_某通知\n\n"
+                "国务院办公厅关于印发《某方案》的通知")
+        out = self.cleaner.clean(text)
+        self.assertNotIn("来源:", out)
+        self.assertNotIn("202405_某通知", out)
+        self.assertIn("国务院办公厅关于印发", out)
+
+    def test_site_chrome_stripped(self):
+        out = self.cleaner.clean("关于印发《某方案》的通知_国务院部门文件_中国政府网EN个人中心退出邮箱无障碍EN")
+        self.assertNotIn("中国政府网", out)
+        self.assertNotIn("个人中心", out)
+        self.assertIn("关于印发《某方案》的通知", out)
+
+    def test_ocr_markup_dump_unwrapped(self):
+        text = ('```html\n<html><body>\n'
+                '<div class="line" data-bbox="58 31 307 52">中华人民共和国中央人民政府</div>\n'
+                '<div class="line" data-bbox="1 2 3 4">www.gov.cn</div>\n'
+                '</body></html>')
+        out = self.cleaner.clean(text)
+        self.assertNotIn("data-bbox", out)
+        self.assertNotIn("<div", out)
+        self.assertIn("中华人民共和国中央人民政府", out)
+
+    def test_legit_angle_brackets_preserved(self):
+        """反例保护: 论文正文里的 <API>/<ATP> 是合法内容, 不得当作 HTML 残留清除"""
+        text = "e(c) = <API> ac(ic) </API> and a Lean proof ends with <ATP>"
+        out = self.cleaner.clean(text, language="en")
+        self.assertIn("<API>", out)
+        self.assertIn("<ATP>", out)
+
+    def test_plain_chinese_text_untouched_by_new_rules(self):
+        """新规则不得污染正常中文语料"""
+        text = "机器学习是人工智能的重要分支，它通过数据训练模型并优化参数。"
+        self.assertEqual(self.cleaner.clean(text), text)
+
+
 if __name__ == "__main__":
     unittest.main()
