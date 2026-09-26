@@ -13,6 +13,7 @@ import glob
 import json
 import logging
 import os
+import threading
 import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -64,6 +65,9 @@ class FileProcessorPipeline:
         self.started_at = datetime.now()
         self._t0 = time.time()
         self.rejections: Counter = Counter()
+        # 生成阶段(来源级并发)的写盘锁: formatter 去重指纹集合非线程安全,
+        # 所有"写数据集/写淘汰记录"的路径都在此锁内串行
+        self._write_lock = threading.Lock()
         self.rejected_path = os.path.join(config.output_dir, "rejected.jsonl")
         # 质量评分"API/网络错误"来源单独落盘: 与"真低质淘汰"区分开 ——
         # 断网时被误淘汰的来源可按此清单定点补跑, 不必整轮重评
@@ -538,38 +542,148 @@ class FileProcessorPipeline:
 
     # ================= 转换输出 =================
     def _convert_and_output(self, name: str, results: List[ReaderResult], converter):
-        """转换并输出数据集"""
+        """转换并输出数据集
+
+        生成阶段（instruction / cot 的 LLM 通道）是网络等待型：一份语料 ~8.7 次调用、
+        每次 25~120 秒，串行时服务端并发余量完全用不上（实测并发 8 路墙钟 6.6x，
+        见 data/_pipeline 并发探针结论）。故按 config.llm_max_concurrency 做
+        **来源级并发**：多份语料同时在飞，每份内部仍按块顺序生成 ——
+        单份样本内容与串行完全一致，只是等待时间重叠。
+
+        写盘集中在主线程（_write_lock 内）：formatter 的去重指纹集合非线程安全，
+        写盘集中化也是 resume"来源级跳过"判据正确的前提。
+
+        记录顺序可能因完成先后与串行不同（**样本集合一致**），换来的是已完成的
+        来源随时落盘 —— 中途断网/被中断后 resume 不必重跑已产出的部分。
+        """
         from tqdm import tqdm
 
         existing_sources = self.formatter.read_sources(name) if self.config.resume else set()
         if existing_sources:
             logger.info("[Output] [%s] resume: 已有 %d 个来源，跳过", name, len(existing_sources))
 
+        pending = [r for r in results if os.path.basename(r.filepath) not in existing_sources]
+        workers = self._generation_workers(converter, len(pending))
+
         total_samples = 0
         total_generated = 0
         written_sources = 0
+        failures = 0
+        empty_sources = 0
 
         pbar = tqdm(total=len(results), desc=f"[Output] {name}", unit="file",
                     ncols=70, bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}]")
+        pbar.update(len(results) - len(pending))
 
-        for result in results:
-            try:
-                source = os.path.basename(result.filepath)
-                if source in existing_sources:
-                    pbar.update(1)
-                    continue
-                samples = converter.convert(result)
-                if samples:
-                    written = self.formatter.write_batch(name, samples)
-                    total_generated += len(samples)
-                    total_samples += written
-                    if written:
-                        written_sources += 1
-            except Exception as e:
-                logger.error("转换失败 [%s] %s: %s",
-                             name, os.path.basename(result.filepath), e)
+        def consume(result, samples):
+            nonlocal total_samples, total_generated, written_sources, empty_sources
+            generated, written = self._write_converted(name, samples)
+            total_generated += generated
+            total_samples += written
+            if written:
+                written_sources += 1
+            elif not generated:
+                # 转换器内部对 LLM 调用失败是逐块 try/except(不冒泡) → 该份产 0 样本。
+                # 断网/限流最常见的就是这种形态: 必须单独计量, 否则"静默少语料"。
+                empty_sources += 1
+                logger.warning("[Output] [%s] %s 未产出样本(LLM 调用失败或硬校验全剔), "
+                               "未写入输出, resume 重跑会补",
+                               name, os.path.basename(result.filepath))
             pbar.update(1)
+
+        def on_failure(result, exc):
+            nonlocal failures
+            failures += 1
+            logger.error("转换失败 [%s] %s: %s", name, os.path.basename(result.filepath), exc)
+            pbar.update(1)
+
+        if workers <= 1:
+            for result in pending:
+                try:
+                    samples = converter.convert(result)
+                except Exception as e:            # noqa: BLE001 - 单份失败不得中断整轮
+                    on_failure(result, e)
+                    continue
+                consume(result, samples)
+        else:
+            logger.info("[Output] [%s] 来源级并发 %d 路（待生成 %d 份）",
+                        name, workers, len(pending))
+            with ThreadPoolExecutor(max_workers=workers,
+                                    thread_name_prefix=f"gen-{name}") as ex:
+                futures = {ex.submit(converter.convert, r): r for r in pending}
+                for fut in as_completed(futures):
+                    result = futures[fut]
+                    try:
+                        samples = fut.result()
+                    except Exception as e:        # noqa: BLE001
+                        on_failure(result, e)
+                        continue
+                    consume(result, samples)
         pbar.close()
+
+        if failures or empty_sources:
+            logger.warning("[Output] [%s] 生成异常合计 %d 份（硬失败 %d / 空产出 %d）"
+                           "—— 均未写入输出，resume 重跑会补",
+                           name, failures + empty_sources, failures, empty_sources)
+        self.stats.generation_failures += failures
+        self.stats.generation_empty += empty_sources
+
+        if total_generated != total_samples:
+            logger.info("[Output] [%s] 跳过与数据集中已有记录完全相同的样本 %d 条",
+                        name, total_generated - total_samples)
+
+        if name == "pretrain":
+            self.stats.pretrain_samples = total_samples
+        elif name == "instruction":
+            self.stats.instruction_samples = total_samples
+        elif name == "cot":
+            self.stats.cot_samples = total_samples
+
+        output_path = self.formatter.get_path(name)
+        # sources = 累计口径（resume 时本次可能只有个位数来源，若直接写本次值
+        # 会把 metadata 里历史的 244+ 覆盖掉）；本次新增另记 sources_this_run
+        self.formatter.write_metadata(
+            name,
+            sources=len(self.formatter.read_sources(name)),
+            sources_this_run=written_sources,
+            generated_at=datetime.now().isoformat(timespec="seconds"),
+            elapsed_seconds=round(time.time() - self._t0, 1),
+            config={
+                "chunk_size": self.config.chunk_size,
+                "chunk_overlap": self.config.chunk_overlap,
+                "enable_llm": self.config.enable_llm,
+                "quality_enabled": self.quality_scorer is not None,
+                "quality_api_errors": self.stats.quality_api_errors,
+                "quality_api_error_path": os.path.basename(self.quality_api_error_path),
+                "generation_workers": workers,
+                "llm_max_concurrency": self.config.llm_max_concurrency,
+                "resume": self.config.resume,
+            },
+        )
+        logger.info("[Output] [%s] %d records (%d sources) -> %s",
+                    name, total_samples, written_sources, output_path)
+
+    def _generation_workers(self, converter, n_pending: int) -> int:
+        """生成阶段的并发路数
+
+        只在"LLM 生成链"上并发：它的耗时 99% 是等 API 响应。纯本地转换（pretrain
+        切块）并发没有收益，只会增加写盘竞争风险 → 保持单路。
+        路数取 config.llm_max_concurrency（此前该配置项从未被使用）。
+        """
+        if n_pending <= 1 or getattr(converter, "llm_generator", None) is None:
+            return 1
+        try:
+            configured = int(self.config.llm_max_concurrency)
+        except (TypeError, ValueError):
+            configured = 1
+        return max(1, min(configured, n_pending))
+
+    def _write_converted(self, name: str, samples) -> tuple:
+        """把一份来源的样本写入数据集（锁内串行）→ (生成条数, 实际写入条数)"""
+        if not samples:
+            return 0, 0
+        with self._write_lock:
+            return len(samples), self.formatter.write_batch(name, samples)
 
         if total_generated != total_samples:
             logger.info("[Output] [%s] 跳过与数据集中已有记录完全相同的样本 %d 条",
@@ -606,6 +720,7 @@ class FileProcessorPipeline:
 
     # ================= 报告 =================
     def _record_rejection(self, source: str, stage: str, reason: str, text: str = ""):
+        # 生成阶段并发时由主线程调用；写盘集中在 _write_lock 语义下进行
         """记录被丢弃的文本，便于事后诊断阈值/OCR质量"""
         self.rejections[reason] += 1
         if not self.config.save_rejected:
@@ -708,6 +823,8 @@ class FileProcessorPipeline:
             "rejection_reasons": dict(self.rejections.most_common()),
             # 断网/限流导致的评分失败: 与"真低质淘汰"分开, 按清单定点补跑即可
             "quality_api_errors": self.stats.quality_api_errors,
+            "generation_failures": self.stats.generation_failures,
+            "generation_empty": self.stats.generation_empty,
             "quality_api_error_path": os.path.basename(self.quality_api_error_path),
             "exact_duplicate_samples_skipped": self.formatter.duplicates_skipped,
             "language_dist": dict(self.stats.language_dist.most_common()),

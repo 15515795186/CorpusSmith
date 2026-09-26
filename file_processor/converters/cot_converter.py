@@ -243,8 +243,9 @@ input 中可见的内容，节选本身不构成不合格项（不要因"材料�
         if not self.review_output or not review:
             return
         import time
+        from ..utils.locks import REVIEW_LOCK
         try:
-            with open(self.review_output, 'a', encoding='utf-8') as f:
+            with REVIEW_LOCK, open(self.review_output, 'a', encoding='utf-8') as f:
                 for s, reason in review:
                     rec = dict(s)
                     rec['_review_reason'] = reason

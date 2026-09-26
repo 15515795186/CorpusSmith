@@ -23,6 +23,8 @@ class StatsCollector:
         self.ppl_filtered = 0          # 困惑度过滤淘汰的文本数
         self.ppl_errors = 0            # 困惑度打分异常(放行不淘汰)的文本数
         self.quality_api_errors = 0    # 质量评分调用失败(网络/限流)的来源数
+        self.generation_failures = 0    # 生成阶段转换失败的来源数(未写入输出, resume 会补)
+        self.generation_empty = 0       # 生成阶段产 0 样本(多为 LLM 调用失败)的来源数
         self.duplicates_removed = 0
         self.cache_hits = 0
         self.pretrain_samples = 0

@@ -582,8 +582,9 @@ class InstructionConverter:
         if not self.review_output or not review:
             return
         import time
+        from ..utils.locks import REVIEW_LOCK
         try:
-            with open(self.review_output, 'a', encoding='utf-8') as f:
+            with REVIEW_LOCK, open(self.review_output, 'a', encoding='utf-8') as f:
                 for s, reason in review:
                     rec = dict(s)
                     rec['_review_reason'] = reason

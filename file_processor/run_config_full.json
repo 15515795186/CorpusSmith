@@ -19,7 +19,7 @@
   "dashscope_model": "qwen3.5-plus",
   "llm_max_attempts": 3,
   "llm_batch_size": 5,
-  "llm_max_concurrency": 3,
+  "llm_max_concurrency": 5,
   "llm_temperature": 0.3,
   "llm_max_tokens": 2048,
 
