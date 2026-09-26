@@ -363,5 +363,112 @@ class SkillTemplateReferenceTest(unittest.TestCase):
         self.assertIn("Give three tips for staying healthy.", p_en)
 
 
+
+class COTSignalNarrowTest(unittest.TestCase):
+    """分类器窄化: 日期/数值区间不算算式; 编号列表必须有计数语义才判推理"""
+
+    def setUp(self):
+        self.cc = COTConverter()
+
+    def test_date_and_range_are_not_math(self):
+        for tx in ("发布日期 2024-03-19，同比增长 40-50%，应当加强统筹协调并完善配套机制。",
+                   "2022-2024 年累计投资 300-500 亿元，各地区需要健全考核评估机制。"):
+            self.assertNotEqual(self.cc._classify_text(tx), "推理", tx[:24])
+
+    def test_real_math_is_reasoning(self):
+        for tx in ("某项目投入 1200 万元、回报 300 万元，收益率 300/1200 = 0.25。",
+                   "材料共列出 24 个条目，其中 8 个属于甲类，24/8 = 3。"):
+            self.assertEqual(self.cc._classify_text(tx), "推理", tx[:24])
+
+    def test_list_needs_counting_cue(self):
+        no_cue = "\n".join(["一、加强统筹协调，明确责任分工。",
+                            "二、完善政策体系，健全配套措施。",
+                            "三、强化监督评估，确保落地见效。"])
+        self.assertNotEqual(self.cc._classify_text(no_cue), "推理")
+        with_cue = "\n".join(["本方案共计 3 项重点任务：",
+                              "一、加强统筹协调，明确责任分工。",
+                              "二、完善政策体系，健全配套措施。",
+                              "三、强化监督评估，确保落地见效。"])
+        self.assertEqual(self.cc._classify_text(with_cue), "推理")
+
+    def test_conditional_deduction_is_reasoning(self):
+        self.assertEqual(
+            self.cc._classify_text("如果温度高于 25 摄氏度，那么设备就会启动保护程序。"),
+            "推理")
+
+
+class COTSampleBudgetTest(unittest.TestCase):
+    """样本条数按材料体量定(长材料 >10、短材料 <10), 四类配比只作目标比例, 但每份
+    产出都应落在 20/30/20/30 的 ±5% 内(全库比例由各份配比自然满足)。"""
+
+    class _FakeLLM:
+        def __init__(self):
+            self.calls = []
+
+        def generate(self, prompt, system_prompt=None, **kw):
+            self.calls.append(prompt)
+            m = re.search(r"任务类别[：:]\s*(解释|推理|建议|比较)", prompt)
+            cls = m.group(1) if m else "解释"
+            return ("类别: %s\n"
+                    "1. 依据材料中列出的第一项内容逐条展开，确保每一步都能在材料中找到出处。\n"
+                    "2. 依次核对材料中的对应条目与数字，保证中间结论与材料表述一致且可复核。\n"
+                    "3. 综合以上信息逐项收敛，落到材料本身给出的结论上，不作任何材料外的补充。\n"
+                    "因此结论是: 见材料。" % cls)
+
+    _UNIT = "\n".join([
+        "本方案共计 3 项重点任务：",
+        "一、加强统筹协调，明确责任分工与考核机制。",
+        "二、完善政策体系，健全配套措施与资金保障渠道。",
+        "三、强化监督评估，确保各项任务落地见效。",
+        "各地区的差异在于财政能力与产业基础：相比东部地区，中西部更需转移支付支持。",
+        "该机制的原理是通过财政激励引导地方行为，因此需要明确可量化的考核指标。",
+        "财政部门应当加强资金监管，推进信息共享，落实风险防控责任。",
+        "从长期看，政策效果取决于配套措施的完整性与执行力度。",
+    ]) + "\n"
+
+    def _run(self, text):
+        cc = COTConverter(llm_generator=self._FakeLLM(), sample_check_ratio=0.0)
+        res = type("R", (), {"filepath": "x.txt", "text": text, "success": True})()
+        return cc, cc.convert(res)
+
+    def _share(self, samples):
+        sh = {}
+        for s in samples:
+            sh[s["task_type"]] = sh.get(s["task_type"], 0) + 1
+        return sh
+
+    def test_short_material_fewer_than_ten(self):
+        # 短材料(无编号/无模板命中): 条数由体量定, 少于 10 条是正常的
+        cc, samples = self._run("本方案要求加强统筹协调，完善政策体系，强化监督评估。")
+        self.assertLess(len(samples), 10)
+        self.assertGreaterEqual(len(samples), 4)
+
+    def test_long_material_more_than_ten(self):
+        cc, samples = self._run(self._UNIT * 30)      # ~6 千字: 条数应 >10
+        self.assertGreater(len(samples), 10)
+
+    def test_mix_within_five_percent_for_both_sizes(self):
+        for txt in (self._UNIT * 4, self._UNIT * 30):
+            cc, samples = self._run(txt)
+            n = len(samples)
+            sh = self._share(samples)
+            for cls, target in (("解释", 0.20), ("建议", 0.30), ("比较", 0.20), ("推理", 0.30)):
+                got = sh.get(cls, 0) / float(n)
+                self.assertLessEqual(abs(got - target), 0.05,
+                                     "%s: %.2f vs %.2f (n=%d)" % (cls, got, target, n))
+
+    def test_each_sample_uses_its_own_class_shot(self):
+        cc, samples = self._run(self._UNIT * 4)
+        prompts = cc.llm_generator.calls
+        for cls in ("解释", "建议", "比较"):
+            self.assertTrue(any("任务类别：%s" % cls in p for p in prompts), cls)
+        self.assertTrue(any("legal-advice-reddit" in p for p in prompts))
+        self.assertTrue(any("openai_summarize_comparisons" in p for p in prompts))
+
+    def test_thin_material_degrades_without_crash(self):
+        cc, samples = self._run("很短的一段说明文字。")
+        self.assertLessEqual(len(samples), 10)
+
+
 if __name__ == "__main__":
     unittest.main()

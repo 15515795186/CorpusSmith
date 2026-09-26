@@ -66,9 +66,14 @@ class COTConverter:
         compare_samples = self._extract_compare_cot(text, result)
         samples.extend(compare_samples)
 
-        # 4. 如果启用了LLM，用LLM增强（按预判类别选 few-shot）
-        if self.llm_generator and len(samples) < 10:
-            llm_samples = self._generate_cot_with_llm(text, result, task_type)
+        # 4. LLM 通道: 按四类目标配比补齐样本。
+        #    《数据集介绍.md》4.5 要求整体分布 20/30/20/30(±5%), 而四类预判是高优先级
+        #    单类别判定: 语料类别集中时(实测 79% 材料判推理、比较类恒为 0)无论重跑多少次
+        #    都到不了目标。故对每份材料按"体量 ↔ 条数"出样本、按 20/30/20/30 分配四类,
+        #    每类用自己的真实样本 few-shot 与该类的抽取式问法。
+        #    条数**不固定**: 长材料出更多、短材料出更少(见 _source_budget)。
+        if self.llm_generator:
+            llm_samples = self._generate_cot_with_llm(text, result, task_type, samples)
             samples.extend(llm_samples)
 
         if self.max_samples > 0:
@@ -134,7 +139,9 @@ class COTConverter:
         """分布硬门禁：超配类裁剪到上限(按产出顺序保留)、欠配类告警。"""
         total = len(samples)
         # 上限 = 目标占比×总数 进一 +1(容忍 round 抖动), 即不超出 ±5% 的配额
-        caps = {t: max(1, int(round(target * total))) + 1
+        # 上限 = (目标占比 + 容忍) × 总数, 进一取整 —— 只裁**超出容忍**的超配,
+        # 不把高价值样本无端裁掉(旧口径"目标占比+1"对长材料偏紧)
+        caps = {t: max(1, int((target + self.distribution_tolerance) * total + 0.999))
                 for t, target in self._DIST_TARGET.items()}
         dist = self._distribution(samples)
         overflow = {t: n - caps[t] for t, n in dist.items()
@@ -262,11 +269,26 @@ input 中可见的内容，节选本身不构成不合格项（不要因"材料�
     # 信号按 skill 决策表实现，**不区分语种**：同一套语义特征，中英各有对应形态
     # （英文形态此前缺失 → 英文材料整类判空，见 commit 说明）。优先序不变：
     # 推理 > 解释 > 建议 > 比较。
+    # 推理·算式信号: **只认真算式** —— 带等号 / 乘除 / 倍数。
+    # 旧模式 "数字[+-*/]数字" 会把日期("2024-03-19")与数值区间("40-50%")当算术,
+    # 实测 80 份语料中 17 份(21%)因此被错判为推理, 是四类分布失衡的首要原因。
+    _HINT_MATH = re.compile(
+        r'\d+\s*[+\-×*/÷]\s*\d+\s*[=＝]|'
+        r'\d+\s*[×*/÷]\s*\d+|'
+        r'\d+\s*[加减乘除]\s*\d+\s*[等为得]|'
+        r'[一二三四五六七八九十百千]+倍', re.IGNORECASE)
+    # 计数语义(决策表的"清点/计数条目"): 编号列表**必须配它**才算推理,
+    # 否则"只列不数"的政策清单会被一律判成推理(实测 58% 材料有 ≥3 编号条目,
+    # 但同时带计数语义的只有 15%)。
+    _COUNT_CUE = re.compile(
+        r'[共合计]计?\s*[一二三四五六七八九十百\d]+\s*[个项条种部章节]|'
+        r'几(?:个|项|条|种|类|部分)|多少个|数量统计|条目数|'
+        r'\bhow many\b|\b(?:total|sum|altogether)\b', re.IGNORECASE)
+    # 推理·逻辑演绎信号: 只认条件式演绎; 单"因此/therefore"是结论词不算推理依据
     _HINT_REASON = re.compile(
-        r'\d+\s*[+\-×xX*÷/]\s*\d+|[共合计]计?\s*[一二三四五六七八九十\d]+[个项条]|'
-        r'\b(?:total|sum|altogether|how many)\b[^.\n]{0,40}?\d+|'
-        r'\b(?:therefore|hence|thus|it follows that|we can (?:conclude|derive|infer))\b|'
-        r'\bif\b[^.\n]{0,60}\bthen\b', re.IGNORECASE)
+        r'如果[^。\n]{0,20}(?:那么|就|则)|若[^。\n]{0,20}(?:则|就)|假设[^。\n]{0,20}(?:则|就)|'
+        r'\bif\b[^.\n]{0,60}\bthen\b|'
+        r'由此(?:可见|可知)|推导(?:得出|可得)', re.IGNORECASE)
     _HINT_LIST = re.compile(
         r'(?:^|\n)\s*[（(]?[一二三四五六七八九十]{1,3}[）)、.．]\s*\S|'
         r'(?:^|\n)\s*\d{1,3}[.)]\s+\S', re.IGNORECASE)   # ASCII 编号列表（英文材料常见）
@@ -296,7 +318,12 @@ input 中可见的内容，节选本身不构成不合格项（不要因"材料�
         返回 None 表示信号弱，由 LLM 通道兜底判断。"""
         if not text:
             return None
-        if self._HINT_REASON.search(text) or len(self._HINT_LIST.findall(text)) >= 3:
+        # 推理 = 真算式 / 条件演绎 / (≥3 编号条目 **且** 有计数语义)。
+        # "只列不数"的编号清单不再判推理, 让位给 解释/建议/比较, 避免单一类别吃掉全库。
+        if (self._HINT_MATH.search(text)
+                or self._HINT_REASON.search(text)
+                or (len(self._HINT_LIST.findall(text)) >= 3
+                    and self._COUNT_CUE.search(text))):
             return "推理"
         if self._HINT_EXPLAIN.search(text):
             return "解释"
@@ -714,8 +741,10 @@ input 中可见的内容，节选本身不构成不合格项（不要因"材料�
         return samples
 
     def _generate_cot_with_llm(self, text: str, result: ReaderResult,
-                               task_type: Optional[str] = None) -> List[Dict]:
-        """用LLM生成COT数据（按预判类别选 few-shot 与生成要求）"""
+                               task_type: Optional[str] = None,
+                               existing: Optional[List[Dict]] = None) -> List[Dict]:
+        """用LLM生成COT数据: 按每份材料的四类目标条数补齐(总量随体量, 配比 20/30/20/30),
+        每类用自己的真实样本 few-shot 与生成要求。existing = 模板通道已产出(用于算缺口)。"""
         if not self.llm_generator:
             return []
 
@@ -723,20 +752,24 @@ input 中可见的内容，节选本身不构成不合格项（不要因"材料�
         source = os.path.basename(result.filepath)
         language = detect_language(text)
 
-        # 先看有没有instruction step中生成的指令，基于那些生成COT
-        from .instruction_converter import InstructionConverter
-        ic = InstructionConverter(max_samples=5)
-        instructions = ic._generate_from_templates(text, result)
-        if not instructions:
-            # 模板种子为空 → skill 的抽取式兜底(旧实现此处直接断链, 英文与无结构
-            # 材料整份零产出; 现在保证"有素材即可生成", 走同一条 LLM 链+硬校验)
-            seed = self._extractive_seed(text, language, task_type)
-            if seed:
-                logger.info("COT 模板种子为空 → 抽取式兜底(类别=%s): %s",
-                            task_type or "解释", source)
-                instructions = [seed]
+        # 按四类目标条数构造种子队列: 某类缺口 = 该类目标条数 - 模板通道该类已有条数
+        have: Dict[str, int] = {}
+        for sd in (existing or []):
+            have[sd.get("task_type")] = have.get(sd.get("task_type"), 0) + 1
+        targets = self._class_targets(text, have)
+        queue: List = []
+        for cls, target in targets.items():
+            gap = target - have.get(cls, 0)
+            if gap <= 0:
+                continue
+            for sd in self._seeds_for_class(text, result, cls, gap):
+                queue.append((cls, sd))
+        logger.info("COT 配额(按体量 %d 字→%d 条): 目标 %s | 模板已产 %s | 待生成 %s | %s",
+                    len(text or ""), self._source_budget(text), targets, have or {},
+                    {c: sum(1 for x, _ in queue if x == c) for c in {q[0] for q in queue}},
+                    source)
 
-        for inst in instructions[:3]:
+        for cur_cls, inst in queue:
             ok = False
             cur_type = task_type or "解释"
             for attempt in range(max(1, self.llm_max_attempts)):
@@ -751,7 +784,7 @@ input 中可见的内容，节选本身不构成不合格项（不要因"材料�
                         inst["output"],
                         inst.get("input") or text[:800],
                         language,
-                        task_type,
+                        cur_cls,      # 本条样本的类别(决定用哪类真实样本 few-shot)
                     )
                     response = self.llm_generator.generate(
                         prompt,
@@ -779,8 +812,8 @@ input 中可见的内容，节选本身不构成不合格项（不要因"材料�
                                            full_material=text):
                         fail_reason = "numeric_inconsistent"
                         raise ValueError(fail_reason)
-                    # 类别：规则预判优先；规则无信号时用 LLM 自判
-                    final_type = task_type or inferred or "解释"
+                    # 类别 = 本样本所属的目标类别(不再取全篇预判, 否则一类吃满全库)
+                    final_type = cur_cls
                     samples.append({
                         "instruction": inst["instruction"],
                         "input": inst.get("input", ""),
@@ -796,7 +829,7 @@ input 中可见的内容，节选本身不构成不合格项（不要因"材料�
                                        fail_reason or e, str(inst.get("output"))[:40])
                 if ok:
                     break
-                cur_type = task_type or inferred or "解释"
+                cur_type = cur_cls
                 # 拒绝采样(失败重试制): 只对"推理"类重试——算式重算/数字一致性
                 # 是可机判的可靠信号, 重试直接换质量; 建议/比较/解释类无机判信号,
                 # 重试与现有 LLM 语义抽检重叠, 维持单次生成
@@ -806,6 +839,34 @@ input 中可见的内容，节选本身不构成不合格项（不要因"材料�
                     logger.info("COT 推理类重试第 %d 次", attempt + 1)
 
         return samples
+
+    # 四类目标配比(= 规范 20/30/20/30)。只作**每份材料的目标比例**, 每份实际条数
+    # 由材料体量决定: 长材料 >10 条、短材料 <10 条都正常, 不做固定条数截断,
+    # 以免把高质量样本无端裁掉; 最终以全库比例落在 ±5% 内为准。
+    _COT_RATIO = {"解释": 0.20, "建议": 0.30, "比较": 0.20, "推理": 0.30}
+    _COT_CHARS_PER_SAMPLE = 500   # 材料每 ~500 字出 1 条样本
+    _COT_MIN_PER_SOURCE = 4       # 下限: 四类各至少 1 条
+    _COT_MAX_PER_SOURCE = 30   # 上限(超长文按 30 条: 76k 字按 500 字/条会算到 150 条, 过重)      # 上限: 防超长材料打爆调用量
+
+    def _source_budget(self, text: str) -> int:
+        """每份材料的样本总量: 由体量决定(每 ~500 字 1 条), 夹在 [4, 40] 之间。"""
+        n = int(round(len(text or "") / float(self._COT_CHARS_PER_SAMPLE)))
+        return max(self._COT_MIN_PER_SOURCE,
+                   min(self._COT_MAX_PER_SOURCE, n))
+
+    def _class_targets(self, text: str, have: Dict[str, int] = None) -> Dict[str, int]:
+        """每份材料的四类目标条数。总量先按体量定; 若模板通道已产出的某类超出该配比
+        (如清点模板一次出 3 条推理), 就把总量抬到让其它类也能按比例跟上的程度 ——
+        每份都回到 20/30/20/30, 且**不删除任何已产出的样本**。
+        """
+        have = have or {}
+        n = self._source_budget(text)
+        for cls, r in self._COT_RATIO.items():
+            h = have.get(cls, 0)
+            if r > 0 and h > 0:
+                n = max(n, int(h / float(r) + 0.999))      # ceil(h / 配比)
+        n = max(self._COT_MIN_PER_SOURCE, min(self._COT_MAX_PER_SOURCE, n))
+        return {cls: max(1, int(round(n * r))) for cls, r in self._COT_RATIO.items()}
 
     # 按类生成要求与 few-shot（真实样本风格压缩自 HF 数据集，与 skill 模板同源）
     _COT_REQ = {
@@ -870,6 +931,114 @@ input 中可见的内容，节选本身不构成不合格项（不要因"材料�
             "input": self._first_excerpt(t, 600),
             "output": self._first_excerpt(t, 200),
         }
+
+    # 句子切分(句末标点或换行) —— 抽取式锚点的最小单位
+    _SENT_SPLIT = re.compile(r'(?<=[。！？!?；;])\s*|\n+')
+    _SENT_END_CHARS = "。！？!?…"
+    # 编号条目(含中文序号与 ASCII), 供"措施/清单"类锚点使用
+    _ITEM_RE = re.compile(r'(?:^|\n)\s*(?:[（(]?[一二三四五六七八九十]{1,3}[）)、.．]|'
+                          r'\d{1,3}[.)])\s*(.{8,200})')
+
+    @staticmethod
+    def _is_complete(s: str) -> bool:
+        """完整句判定: 中文句末标点收尾, 或拉丁尾部以句点收尾。
+        标题句(以"："收尾)不算 —— 拿它当答案会被截断校验整条丢弃。"""
+        y = (s or "").strip()
+        if not y:
+            return False
+        if y[-1] in COTConverter._SENT_END_CHARS:
+            return True
+        return y[-1] == "." and not re.search(r'[\u4e00-\u9fff]', y[-30:])
+
+    def _class_anchors(self, text: str, cls: str, k: int) -> List[str]:
+        """为某一类找 k 个**不同**且**完整句**的材料落点(句子/条目/对象对):
+        同类多条的答案与 input 取自不同落点, 避免同材料同问重复。"""
+        t = text or ""
+        sents = [x.strip() for x in self._SENT_SPLIT.split(t) if x and len(x.strip()) >= 12]
+        pat = {"解释": self._HINT_EXPLAIN, "建议": self._HINT_ADVICE,
+               "比较": self._HINT_COMPARE, "推理": self._HINT_MATH}.get(cls)
+        picked, seen = [], set()
+
+        def take(x):
+            x = x.strip()
+            if not x or not COTConverter._is_complete(x):
+                return False
+            key = x[:40]
+            if key in seen:
+                return False
+            seen.add(key)
+            picked.append(x)
+            return True
+
+        for sx in sents:
+            if pat is not None and not pat.search(sx):
+                continue
+            take(sx)
+            if len(picked) >= k:
+                return picked[:k]
+        items = [m.group(1).strip() for m in self._ITEM_RE.finditer(t)]
+        if cls == "比较":
+            # 比较类: 编号条目两两成对("A 与 B"), 材料中并列的措施/对象即可对比
+            pairs = []
+            for i in range(0, max(0, len(items) - 1), 2):
+                pair = "%s 与 %s" % (items[i].rstrip("。"), items[i + 1])
+                pairs.append(pair[:200])
+                if len(pairs) >= k:
+                    break
+            if pairs:
+                return pairs
+        for it in items:
+            take(it)
+            if len(picked) >= k:
+                return picked[:k]
+        for sx in sents:          # 兜底: 完整长句(保证每类都能出到目标条数)
+            if len(sx) < 20:
+                continue
+            take(sx)
+            if len(picked) >= k:
+                break
+        return picked[:k]
+
+    @staticmethod
+    def _excerpt_around(text: str, anchor: str, limit: int) -> str:
+        """取锚点前后各半的窗口, 保证锚点本身在 input 里可见(链只能引用 input 内内容)。"""
+        t = text or ""
+        i = t.find(anchor)
+        if i < 0:
+            return COTConverter._first_excerpt(t, limit)
+        half = max(120, limit // 2)
+        return COTConverter._first_excerpt(t[max(0, i - half):], limit)
+
+    def _seeds_for_class(self, text: str, result: ReaderResult, cls: str,
+                         k: int) -> List[Dict]:
+        """某一类的 k 个抽取式种子: 该类固定问法 + 材料锚点作答案 + 锚点上下文作 input。
+        答案必须是**完整句**(否则会被截断校验丢弃); 锚点不足时用材料不同窗口兜底,
+        全部取自材料原文, 不引入生成内容。"""
+        ask_zh, ask_en = self._SEED_ASK[cls]
+        language = detect_language(text)
+        ask = ask_zh if language == "zh" else ask_en
+        seeds: List[Dict] = []
+        for a in self._class_anchors(text, cls, max(k * 2, k + 3)):
+            if len(seeds) >= k:
+                break
+            out = self._first_excerpt(a, 200)
+            if not COTConverter._is_complete(out):
+                continue
+            seeds.append({
+                "instruction": "%s（围绕材料中的「%s」）" % (ask, a.strip()[:24]),
+                "input": self._excerpt_around(text, a, 800),
+                "output": out,
+            })
+        i = 0
+        while len(seeds) < k and i < k * 3:      # 兜底: 材料不同窗口
+            win = (text or "")[i * 300:]
+            out = self._first_excerpt(win, 200)
+            if len(out) >= 20 and COTConverter._is_complete(out):
+                seeds.append({"instruction": ask,
+                              "input": self._first_excerpt(win, 800),
+                              "output": out})
+            i += 1
+        return seeds
 
     def _build_cot_prompt(self, instruction: str, output: str,
                           context: str, language: str,

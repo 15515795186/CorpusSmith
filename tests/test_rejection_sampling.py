@@ -16,10 +16,12 @@ class FakeGenerator:
     def __init__(self, responses):
         self.responses = responses
         self.call_count = 0
+        self.prompts = []          # 记录每次 prompt(按类统计调用次数用)
 
     def generate(self, prompt, system_prompt=None):
         r = self.responses[min(self.call_count, len(self.responses) - 1)]
         self.call_count += 1
+        self.prompts.append(prompt)
         return r
 
 
@@ -73,30 +75,39 @@ class TestCOTRetry(unittest.TestCase):
         "因此结论是: 共5条。"
     )
 
+    # 无数字、句末完整的链: 数字一致性与截断校验都能过(重试只由"短。"触发)
+    SAFE_CHAIN = ("1. 依据材料中列出的条目逐条展开，每一步都能在材料中找到出处。\n"
+                  "2. 依次核对材料中的对应条目，保证中间结论与材料表述一致且可复核。\n"
+                  "因此结论是: 见材料。")
+
+    @staticmethod
+    def _calls_for(gen, cls):
+        """按类统计调用次数: 四类配额通道下, 一次生成会对四类分别调用"""
+        return sum(1 for p in getattr(gen, "prompts", []) if ("任务类别：%s" % cls) in p)
+
     def test_reasoning_retries_on_bad_chain(self):
-        # task_type=推理: 首次链过短(截断) → 重试; 第二次合格 → 停止
-        gen = FakeGenerator(["短。", self.GOOD_CHAIN])
+        # 队列顺序 解释→建议→比较→推理: 前三次各返回"短。"(非推理类不重试),
+        # 推理类首败后重试 → 第二次合格停止
+        gen = FakeGenerator(["短。"] * 4 + [self.SAFE_CHAIN])
         cc = COTConverter(llm_generator=gen, llm_max_attempts=3)
         samples = cc._generate_cot_with_llm(LIST_TEXT, make_result(LIST_TEXT), task_type="推理")
-        self.assertEqual(gen.call_count, 2)
-        self.assertGreaterEqual(len(samples), 1)
-        if samples:
-            self.assertEqual(samples[0]["task_type"], "推理")
+        self.assertEqual(self._calls_for(gen, "推理"), 2)          # 首败→重试
+        self.assertTrue(any(s["task_type"] == "推理" for s in samples))
 
     def test_non_reasoning_no_retry(self):
         # 建议类: 首次失败 → 不重试, 单次调用
         gen = FakeGenerator(["短。"])
         cc = COTConverter(llm_generator=gen, llm_max_attempts=3)
         samples = cc._generate_cot_with_llm(LIST_TEXT, make_result(LIST_TEXT), task_type="建议")
-        self.assertEqual(gen.call_count, 1)      # 不重试
-        self.assertEqual(samples, [])
+        self.assertEqual(self._calls_for(gen, "建议"), 1)          # 不重试
+        self.assertEqual([s for s in samples if s["task_type"] == "建议"], [])
 
     def test_reasoning_gives_up_after_max_attempts(self):
-        gen = FakeGenerator(["短。", "短。", "短。", "短。"])
+        gen = FakeGenerator(["短。"])
         cc = COTConverter(llm_generator=gen, llm_max_attempts=3)
         samples = cc._generate_cot_with_llm(LIST_TEXT, make_result(LIST_TEXT), task_type="推理")
-        self.assertEqual(gen.call_count, 3)
-        self.assertEqual(samples, [])
+        self.assertEqual(self._calls_for(gen, "推理"), 3)          # 耗尽重试
+        self.assertFalse(any(s["task_type"] == "推理" for s in samples))
 
 
 
@@ -130,17 +141,18 @@ class TestCOTExtractiveSeed(unittest.TestCase):
         self.assertEqual(seeds, [], "前提: 该英文散文无模板命中")
 
     def test_llm_channel_still_runs_without_template_seed(self):
+        # 模板为空时必须仍能生成: 四类配额通道会分别调用(样本类别取自各自的目标类别)
         gen = FakeGenerator([self.EN_CHAIN])
         cc = COTConverter(llm_generator=gen, llm_max_attempts=1)
         samples = cc._generate_cot_with_llm(self.EN_PROSE, make_result(self.EN_PROSE),
                                             task_type="建议")
         self.assertGreaterEqual(gen.call_count, 1, "模板为空时必须仍调用 LLM(抽取式兜底)")
         self.assertGreaterEqual(len(samples), 1, "英文散文应能产出 COT 样本")
-        s0 = samples[0]
-        for k in ("instruction", "input", "chain_of_thought", "output", "task_type"):
-            self.assertIn(k, s0)
-        self.assertEqual(s0["task_type"], "建议")
-        self.assertTrue(s0["input"], "抽取式种子的 input 必须是材料节选")
+        for s0 in samples:
+            for k in ("instruction", "input", "chain_of_thought", "output", "task_type"):
+                self.assertIn(k, s0)
+            self.assertIn(s0["task_type"], ("解释", "推理", "建议", "比较"))
+            self.assertTrue(s0["input"], "抽取式种子的 input 必须是材料节选")
 
     def test_seed_is_english_for_english_material(self):
         cc = COTConverter()
