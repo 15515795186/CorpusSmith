@@ -13,7 +13,7 @@ env/
 
 # ---- 数据与产出（体积大，可由 data/_pipeline 重建）----
 data/
-datasets/
+datasets*/
 .cache/
 ocr_temp/
 output/

@@ -48,8 +48,12 @@ LLM_Data_Test/
 │   ├── 截图html/                    50 张页面截图 PNG（需 OCR）
 │   ├── txt/                        50 篇政府白皮书 TXT
 │   ├── tech_output/                数据构建暂存区
+│   ├── 爬取语料/                    初版爬取语料（80 份）
+│   ├── 爬取语料_v2/                 第二版（40 份，备用）
+│   ├── 爬取语料_v3/                 第三版（8 类 × 3 = 24 份，当前主用；清单见 data/_pipeline/manifest_v3.json）
 │   └── _pipeline/                  采集/生成/校验脚本（重建数据时使用）
-├── datasets/                        # 产出目录（每次运行重建）
+├── datasets_v3_20260927/            # 当前产出（pretrain 237 / instruction 165 / cot 51；目录名由 output_dir 配置）
+├── docs/                            # 分析留档（对账_COT第三轮_20260927.md、薄答案实例_20260927.md）
 ├── tests/                           # 单元与端到端测试
 ├── _archive/                        # 已废弃的本地 OCR 方案（见其 README）
 ├── check_progress.py                # 进度查看：输入量 / 产出 / 缓存 / 报告 / 日志（自动选最新 ocr_run*.log）
@@ -187,7 +191,7 @@ python check_progress.py
 ## 输出说明
 
 ```
-datasets/
+datasets_v3_20260927/          # 实际目录名由 output_dir 决定（本轮 = datasets_v3_20260927）
 ├── pretrain/
 │   ├── data.jsonl
 │   └── metadata.json          # 记录数 / 来源数（累计口径）/ 本次新增来源 / 生成时间 / 关键配置
@@ -348,7 +352,7 @@ metadata 累计来源口径）、**样本字段契约**（开卷样本必带材�
   注意"确定性丢弃"必须一起跳过：SimHash 判重依赖同轮上下文，近重复文档单独重跑时会因相似对象缺席而放行、污染数据集（该 bug 由 resume 前移测试暴露并修复）。resume 时 `rejected.jsonl` 为**追加**写，保留历史判据。
 - **metadata.sources 是累计口径**：resume 补跑只写本次几个来源时，旧实现会把累计 248 覆盖成 4；现在写累计值并另记 `sources_this_run`，`verify_datasets.py` 增加二者一致性校验（历史产出已用一次性脚本修正为 248/218/220）。
 - **读取缓存位置**：`.cache/read_cache.jsonl`（键为绝对路径 + mtime + size，文件变化自动失效；只缓存成功结果）。
-- **临时目录**：扫描 PDF 渲染页写入 `ocr_temp/`（`ocr_work_dir` 可配），运行后自动清理。
+- **临时目录**：扫描 PDF 渲染页写入 `ocr_temp/`（`ocr_work_dir` 可配），运行后自动清理；**中断运行会残留大量 PNG**，已被 `.gitignore` 忽略，可随时整个删除（OCR 文本结果另存读取缓存 `.cache/read_cache.jsonl`）。
 - **日志**：后台运行建议 `cmd /c "python -m file_processor.main ... > ocr_runN.log 2>&1"`（pwsh 的 `>` 会写出 UTF-16 造成乱码）；`check_progress.py` 自动选择最新的 `ocr_run*.log`，也可 `python check_progress.py 指定日志` 覆盖。
 - **限流救回**：若因 API 偶发限流出现 `Max retries exceeded`，直接再跑一次 `--resume` 即可（只重试质检淘汰来源，其余全部跳过）。
 
@@ -359,7 +363,7 @@ metadata 累计来源口径）、**样本字段契约**（开卷样本必带材�
 数据来源、采集口径、校验结果与重建命令见 [`data/README.md`](data/README.md)。
 数据构建工具链在 `data/_pipeline/`，重跑数据时按该文档执行即可。
 
-历史遗留输出（旧版追加写导致重复样本堆积）已移至 `datasets/_legacy_flat/`，仅作参考。
+历史遗留输出（旧版追加写导致的重复样本堆积、各轮中断/作废产出、demo 输出、OCR 临时件）已于 2026-09-27 统一清理，约释放 500MB；需要时重跑重建即可（数据本身在 `data/`）。
 
 ---
 
