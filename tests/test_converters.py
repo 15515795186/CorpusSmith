@@ -1,3 +1,5 @@
+import json
+import os
 import re
 import unittest
 
@@ -5,6 +7,7 @@ from file_processor.converters.pretrain_converter import PretrainConverter
 from file_processor.converters.instruction_converter import InstructionConverter
 from file_processor.converters.cot_converter import COTConverter
 from file_processor.readers.base import ReaderResult
+from tests._tempdir import cleanup, workspace_tempdir
 
 CHINESE_DOC = (
     "# 数据处理的流程\n\n"
@@ -66,21 +69,49 @@ class InstructionConverterTest(unittest.TestCase):
         self.assertLessEqual(len(converter.convert(make_result())), 2)
 
 
-class COTConverterTest(unittest.TestCase):
+class COTJudgeTest(unittest.TestCase):
+    """判类只在 SFT 样本层(《数据集介绍.md》4.5)——三态: 四类 / 四类之外 / 难以区分(人工审核)"""
 
-    def test_step_and_causal_samples(self):
-        converter = COTConverter()
-        samples = converter.convert(make_result())
-        self.assertTrue(samples, "应能从编号步骤/因果关系生成 COT 样本")
-        for sample in samples:
-            self.assertIn("chain_of_thought", sample)
-            self.assertTrue(sample["chain_of_thought"].strip())
-            self.assertTrue(sample["output"].strip())
-            self.assertEqual(sample["source"], "doc.txt")
+    def setUp(self):
+        self.cc = COTConverter()
 
-    def test_max_samples_applied(self):
-        converter = COTConverter(max_samples=1)
-        self.assertEqual(len(converter.convert(make_result())), 1)
+    def _judge(self, instruction, output="材料给出的答案。"):
+        return self.cc._judge_sample({"instruction": instruction, "output": output})
+
+    def test_explicit_class_marker_wins(self):
+        self.assertEqual(self._judge("请对比 ClickHouse 与 Loki 的查询能力。")[0], "比较")
+        self.assertEqual(self._judge("计算 3 × 4 的结果。", "12")[0], "推理")
+        self.assertEqual(self._judge("该机制的原理是什么？", "原理是热传导。")[0], "解释")
+
+    def test_template_and_filename_stripped_before_judging(self):
+        raw = "根据以下关于「比较_cnblogs_x.txt」的材料，请解释其原理。"
+        cls, why = self._judge(raw)
+        self.assertEqual(cls, "解释")
+        self.assertEqual(why, "题面显式类别标记")
+        stripped = self.cc._strip_template(raw)
+        self.assertNotIn("cnblogs", stripped, "来源文件名不得进入判类依据")
+        self.assertNotIn("比较", stripped)
+
+    def test_counting_question_is_reasoning(self):
+        self.assertEqual(self._judge("材料中共列出了几个条目？", "共 5 个。")[0], "推理")
+
+    def test_numbered_list_without_counting_is_not_reasoning(self):
+        doc = "一、加强统筹协调。\n二、完善政策体系。\n三、强化监督评估。"
+        self.assertNotEqual(self._judge(doc)[0], "推理")
+
+    def test_summary_and_fact_retrieval_are_out_of_scope(self):
+        for q in ("请总结材料的主要内容。", "编制报告依据了哪些文件？",
+                  "Identify the Python version mentioned in the text.",
+                  "谁是本文的作者？", "When was this publication released?"):
+            self.assertIsNone(self._judge(q)[0], q)
+
+    def test_conflicting_explicit_markers_go_to_human_review(self):
+        cls, why = self._judge("请对比 A 与 B 的差异，并给出改进建议。")
+        self.assertEqual(cls, COTConverter.UNCERTAIN)
+        self.assertIn("冲突", why)
+
+    def test_empty_instruction_is_uncertain(self):
+        self.assertEqual(self._judge("")[0], COTConverter.UNCERTAIN)
 
 
 class InstructionGroundingTest(unittest.TestCase):
@@ -134,130 +165,6 @@ class InstructionGroundingTest(unittest.TestCase):
         self.assertEqual(defs, [], "动词误接（仍然是指）与超长编号术语应被门控拦截")
 
 
-class COTGroundingTest(unittest.TestCase):
-
-    STEP_DOC = (
-        "项目实施流程\n\n"
-        "1. 需求调研并输出需求分析报告\n"
-        "2. 方案设计并组织专家评审\n"
-        "3. 编码实现并完成自测验证\n\n"
-        "首先，项目组完成需求调研，其次，进入方案设计与评审，最后，完成编码实现与验收。\n"
-    )
-
-    def test_step_samples_are_grounded(self):
-        samples = COTConverter().convert(make_result(self.STEP_DOC))
-        steps = [s for s in samples if "根据以下材料" in s["instruction"]]
-        self.assertTrue(steps, "步骤类样本应改为开卷形态")
-        for s in steps:
-            self.assertTrue(s["input"].strip())
-            self.assertNotIn("该任务", s["instruction"], "无标题时不得硬造空指代")
-
-    SECTION_DOC = (
-        "论文结构\n\n"
-        "1. Introduction\n\n"
-        "2. Related Work\n\n"
-        "3. Method\n\n"
-        "4. Experiments\n\n"
-        "5. Conclusion\n"
-    )
-
-    def test_section_numbering_is_not_a_process(self):
-        samples = COTConverter().convert(make_result(self.SECTION_DOC))
-        bogus = [s for s in samples if "步骤" in s["instruction"]]
-        self.assertEqual(bogus, [], "论文章节编号不得被当作流程步骤生成样本")
-
-    def test_causal_sample_input_stays_empty(self):
-        samples = COTConverter().convert(make_result(CHINESE_DOC))
-        causal = [s for s in samples if s["instruction"].startswith("根据已知信息")]
-        self.assertTrue(causal)
-        for s in causal:
-            self.assertEqual(s["input"], "", "条件已在题面，自包含合规")
-
-    def test_three_step_sample_grounded(self):
-        samples = COTConverter().convert(make_result(self.STEP_DOC))
-        three = [s for s in samples if "第一步骤" in s["chain_of_thought"]]
-        self.assertTrue(three)
-        for s in three:
-            self.assertIn("首先", s["input"], "题面不得依赖看不见的原文")
-
-
-class COTRecallExpansionTest(unittest.TestCase):
-    """中文编号清点通道 + 因果关联词扩集：新增召回必须不破坏开卷契约"""
-
-    WHITEPAPER = (
-        "中国对非援助政策宣示\n\n"
-        "一、扩大对非援助规模，到2009年使中国对非洲国家的援助规模比2006年增加一倍。\n"
-        "二、三年内面向非洲国家提供三百亿美元的优惠贷款和二十亿美元的优惠出口买方信贷。\n"
-        "三、为鼓励和支持中国企业到非洲投资，设立中非发展基金，基金总额逐步达到五十亿美元。\n"
-    )
-
-    def test_cn_numbered_block_yields_inventory_only(self):
-        samples = COTConverter().convert(make_result(self.WHITEPAPER))
-        inv = [s for s in samples if "清点" in s["instruction"]]
-        self.assertEqual(len(inv), 1, "中文编号块应产出恰一条清点样本")
-        self.assertIn("一、扩大对非援助规模", inv[0]["input"], "材料必须进 input（开卷）")
-        self.assertIn("三、为鼓励和支持", inv[0]["input"])
-        self.assertNotIn("完整流程", "".join(s["instruction"] for s in samples),
-                         "无时序证据的中文编号（并行宣告）不得产流程样本")
-
-    def test_cn_toc_short_titles_rejected(self):
-        doc = "报告目录\n\n一、概述\n二、方法\n三、结果\n四、结论\n"
-        samples = COTConverter().convert(make_result(doc))
-        self.assertEqual([s for s in samples if "清点" in s["instruction"]], [],
-                         "短标题目录不得生成清点样本（中位长≥12守卫）")
-
-    def test_cn_count_matches_visible_material(self):
-        # 12 条 × ~140 字 > 1500 预算：计数答案必须等于截断后材料里可见的条目数
-        cn = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十', '十一', '十二']
-        body = "\n".join(f"{c}、推进{p}领域的制度建设，形成配套措施并组织实施保障方案，确保落地见效。{'补充说明文字' * 25}"
-                         for c, p in zip(cn, ['经济', '社会', '文化', '生态', '教育', '科技',
-                                              '民生', '卫生', '住房', '就业', '安全', '法治']))
-        samples = COTConverter().convert(make_result(body + "\n"))
-        inv = [s for s in samples if "清点" in s["instruction"]]
-        self.assertEqual(len(inv), 1)
-        visible = sum(1 for ln in inv[0]["input"].split("\n")
-                      if re.match(r'^[一二三四五六七八九十]{1,3}、', ln))
-        claimed = int(re.search(r'列出(\d+)个条目', inv[0]["output"]).group(1))
-        self.assertEqual(claimed, visible, "计数不得引用材料里看不到的条目")
-
-    def test_paren_style_inventory(self):
-        doc = ("（一）第一阶段的目标是基本完成主要制度的框架设计工作。\n"
-               "（二）第二阶段重点推进试点地区的实施与评估反馈机制。\n"
-               "（三）第三阶段总结推广成熟经验并建立长效运行保障体系。\n")
-        samples = COTConverter().convert(make_result(doc))
-        inv = [s for s in samples if "清点" in s["instruction"]]
-        self.assertEqual(len(inv), 1)
-        self.assertIn("三、第三阶段", inv[0]["input"], "括号编号归一为顿号样式入材料")
-        self.assertIn("一、第一阶段", inv[0]["input"])
-
-    def test_causal_narrative_and_swallow_rejected(self):
-        doc = ("由于有人提出“我们看一看地图”的建议，因此会场短暂安静了下来。\n"
-               "因为我们坚持了基本原则，所以会议取得了超出预期的阶段性成果；由于双方互谅互让，"
-               "因此会谈最终签署了联合公报。\n")
-        samples = COTConverter().convert(make_result(doc))
-        causal = [s for s in samples if s["instruction"].startswith("根据已知信息")]
-        self.assertEqual(causal, [], "引号嵌套（转述）与分号并环（多段推理链）不得切片成样本")
-
-    def test_new_causal_connectives_accepted(self):
-        doc = ("由于历史原因形成的两岸分离状态尚未消除，因此实现统一需要兼顾现实与法理两个维度。\n"
-               "只有坚持一个中国原则的基础不动摇，才能为两岸协商创造必要的政治前提条件。\n")
-        samples = COTConverter().convert(make_result(doc))
-        causal = [s for s in samples if s["instruction"].startswith("根据已知信息")]
-        self.assertEqual(len(causal), 2, "由于…因此 / 只有…才能 都应被识别")
-        for s in causal:
-            self.assertEqual(s["input"], "", "题面自包含（条件已写入），留空合规")
-        self.assertTrue(any("才能" in s["output"] or s["output"].startswith("为两岸")
-                            for s in causal), "只有…才能 的结论不得残留'能'字错切")
-
-    def test_causal_anaphora_and_cross_sentence_rejected(self):
-        doc = ("因为这家长期坚持高研发投入的科技型企业，所以获得了资本市场的持续关注。\n"
-               "因为外部市场需求趋于饱和，库存持续积压。产业政策收紧，所以企业必须加快转型。\n")
-        samples = COTConverter().convert(make_result(doc))
-        causal = [s for s in samples if s["instruction"].startswith("根据已知信息")]
-        self.assertEqual(causal, [],
-                         "指代词开头的前提（悬空）与含句号的跨句贪婪配对都必须拒绝")
-
-
 class NumberedListSampleTest(unittest.TestCase):
     """白皮书式编号条目（并行措施）的正确落点：instruction 列举任务，而非 COT 流程"""
 
@@ -285,45 +192,22 @@ class NumberedListSampleTest(unittest.TestCase):
 
 
 
-class COTClassifyBilingualTest(unittest.TestCase):
-    """四类预判按 skill 决策表实现, 中英文同一套语义特征(此前英文形态缺失 → 整类判空)"""
+class COTJudgeBilingualTest(unittest.TestCase):
+    """四类判类中英文同一套语义特征(英文形态缺失会让英文材料整块判空)"""
 
-    EN_REASON_MATH = "The cost is 12 + 30 = 42 dollars in total. Hence the figure rises."
-    EN_REASON_LOGIC = ("If the sensor fails, then the backup unit takes over within "
-                       "two seconds, so the system stays online.")
-    EN_REASON_COUNT = ("1. Surface stations report hourly.\n2. Radiosondes sample the "
-                       "column twice a day.\n3. Satellites fill the gaps over oceans.\n"
-                       "The total number of observing systems used is 3.")
-    EN_EXPLAIN = ("Meteorology is defined as the study of the atmosphere. This section "
-                  "explains why convection forms clouds and the mechanism behind it.")
-    EN_ADVICE = ("Forecasters should verify each model run. Operators must log every "
-                 "alert. The guidelines also recommend checking instruments daily.")
-    EN_COMPARE = ("Compared with radiosondes, satellites cover far more area. The "
-                  "difference between the two methods matters when choosing an approach.")
+    def _judge(self, instruction, output="Answer from the material."):
+        return COTConverter()._judge_sample({"instruction": instruction, "output": output})[0]
 
-    def _cls(self, text):
-        return COTConverter()._classify_text(text)
+    def test_english_classes(self):
+        self.assertEqual(self._judge("Compare the two methods described in the text."), "比较")
+        self.assertEqual(self._judge("Why does convection form clouds?"), "解释")
+        self.assertEqual(self._judge("What should forecasters do before issuing a warning?"), "建议")
+        self.assertEqual(self._judge("Calculate the total cost: 12 + 30."), "推理")
 
-    def test_english_reasoning_signals(self):
-        self.assertEqual(self._cls(self.EN_REASON_MATH), "推理")
-        self.assertEqual(self._cls(self.EN_REASON_LOGIC), "推理")
-        self.assertEqual(self._cls(self.EN_REASON_COUNT), "推理")
-
-    def test_english_other_categories(self):
-        self.assertEqual(self._cls(self.EN_EXPLAIN), "解释")
-        self.assertEqual(self._cls(self.EN_ADVICE), "建议")
-        self.assertEqual(self._cls(self.EN_COMPARE), "比较")
-
-    def test_priority_reasoning_beats_advice(self):
-        # 优先序 推理 > 解释 > 建议 > 比较: 含算式 + should 的文本归推理
-        self.assertEqual(self._cls("You should compute 3 * 4 = 12 before reporting."), "推理")
-
-    def test_chinese_unchanged(self):
-        # 中文行为不回归: 政策建议文 → 建议; 定义机制 → 解释
-        self.assertEqual(self._cls("本方案要求各省应当加强统筹协调，落实重点任务。"), "建议")
-        self.assertEqual(self._cls("该机制的原理是热传导，由于温差导致热量流动。"), "解释")
-
-
+    def test_english_retrieval_is_out_of_scope(self):
+        for q in ("Who are the authors of this paper?", "List three categories below the display options.",
+                  "What type of light does Webb detect?"):
+            self.assertIsNone(self._judge(q), q)
 
 
 class SkillTemplateReferenceTest(unittest.TestCase):
@@ -364,110 +248,123 @@ class SkillTemplateReferenceTest(unittest.TestCase):
 
 
 
-class COTSignalNarrowTest(unittest.TestCase):
-    """分类器窄化: 日期/数值区间不算算式; 编号列表必须有计数语义才判推理"""
+class COTJudgeNarrowTest(unittest.TestCase):
+    """判类窄化: 日期/数值区间不算算式; 编号列表必须有计数提问才算推理"""
 
     def setUp(self):
         self.cc = COTConverter()
 
+    def _judge(self, instruction, output="材料给出的答案。"):
+        return self.cc._judge_sample({"instruction": instruction, "output": output})[0]
+
     def test_date_and_range_are_not_math(self):
-        for tx in ("发布日期 2024-03-19，同比增长 40-50%，应当加强统筹协调并完善配套机制。",
+        for tx in ("发布日期 2024-03-19，同比增长 40-50%，应当加强统筹协调。",
                    "2022-2024 年累计投资 300-500 亿元，各地区需要健全考核评估机制。"):
-            self.assertNotEqual(self.cc._classify_text(tx), "推理", tx[:24])
+            self.assertNotEqual(self._judge(tx), "推理", tx[:24])
 
     def test_real_math_is_reasoning(self):
-        for tx in ("某项目投入 1200 万元、回报 300 万元，收益率 300/1200 = 0.25。",
-                   "材料共列出 24 个条目，其中 8 个属于甲类，24/8 = 3。"):
-            self.assertEqual(self.cc._classify_text(tx), "推理", tx[:24])
+        self.assertEqual(self._judge("某项目收益率 300/1200 = 0.25，请计算该比值。"), "推理")
 
-    def test_list_needs_counting_cue(self):
+    def test_list_needs_counting_question(self):
         no_cue = "\n".join(["一、加强统筹协调，明确责任分工。",
                             "二、完善政策体系，健全配套措施。",
                             "三、强化监督评估，确保落地见效。"])
-        self.assertNotEqual(self.cc._classify_text(no_cue), "推理")
-        with_cue = "\n".join(["本方案共计 3 项重点任务：",
-                              "一、加强统筹协调，明确责任分工。",
-                              "二、完善政策体系，健全配套措施。",
-                              "三、强化监督评估，确保落地见效。"])
-        self.assertEqual(self.cc._classify_text(with_cue), "推理")
+        self.assertNotEqual(self._judge(no_cue), "推理")
+        self.assertEqual(self._judge("请清点材料中一共列出了几项重点任务？", no_cue), "推理")
 
     def test_conditional_deduction_is_reasoning(self):
         self.assertEqual(
-            self.cc._classify_text("如果温度高于 25 摄氏度，那么设备就会启动保护程序。"),
+            self._judge("如果温度高于 25 摄氏度，那么设备就会启动保护程序。", "设备会启动保护程序。"),
             "推理")
 
 
-class COTSampleBudgetTest(unittest.TestCase):
-    """样本条数按材料体量定(长材料 >10、短材料 <10), 四类配比只作目标比例, 但每份
-    产出都应落在 20/30/20/30 的 ±5% 内(全库比例由各份配比自然满足)。"""
+class COTSampleDrivenTest(unittest.TestCase):
+    """COT 以既有 SFT 问答对为唯一素材: 不自造问答对 + 字段契约 + 来源可溯"""
 
     class _FakeLLM:
-        def __init__(self):
+        GOOD = ("1. 材料给出两个对象各自的强弱项，逐项核对后落在同一结论上。\n"
+                "2. 综合以上事实收敛到回答。\n因此结论是: ClickHouse 更强。")
+
+        def __init__(self, responses=None):
+            self.responses = list(responses) if responses else [self.GOOD]
             self.calls = []
 
         def generate(self, prompt, system_prompt=None, **kw):
             self.calls.append(prompt)
-            m = re.search(r"任务类别[：:]\s*(解释|推理|建议|比较)", prompt)
-            cls = m.group(1) if m else "解释"
-            return ("类别: %s\n"
-                    "1. 依据材料中列出的第一项内容逐条展开，确保每一步都能在材料中找到出处。\n"
-                    "2. 依次核对材料中的对应条目与数字，保证中间结论与材料表述一致且可复核。\n"
-                    "3. 综合以上信息逐项收敛，落到材料本身给出的结论上，不作任何材料外的补充。\n"
-                    "因此结论是: 见材料。" % cls)
+            return self.responses[min(len(self.calls) - 1, len(self.responses) - 1)]
 
-    _UNIT = "\n".join([
-        "本方案共计 3 项重点任务：",
-        "一、加强统筹协调，明确责任分工与考核机制。",
-        "二、完善政策体系，健全配套措施与资金保障渠道。",
-        "三、强化监督评估，确保各项任务落地见效。",
-        "各地区的差异在于财政能力与产业基础：相比东部地区，中西部更需转移支付支持。",
-        "该机制的原理是通过财政激励引导地方行为，因此需要明确可量化的考核指标。",
-        "财政部门应当加强资金监管，推进信息共享，落实风险防控责任。",
-        "从长期看，政策效果取决于配套措施的完整性与执行力度。",
-    ]) + "\n"
+    SFT = {
+        "id": "sft-000042",
+        "instruction": "请对比 ClickHouse 与 Loki 的查询能力差异。",
+        "input": "ClickHouse 查询能力强；Loki 查询较弱。",
+        "output": "ClickHouse 更强。",
+        "source": "doc.txt",
+    }
+    CORPUS = "前言段落。ClickHouse 查询能力强；Loki 查询较弱。后记段落。"
 
-    def _run(self, text):
-        cc = COTConverter(llm_generator=self._FakeLLM(), sample_check_ratio=0.0)
-        res = type("R", (), {"filepath": "x.txt", "text": text, "success": True})()
-        return cc, cc.convert(res)
+    def test_sample_is_basis_and_fields_filled(self):
+        cc = COTConverter(llm_generator=self._FakeLLM())
+        samples = cc.convert_sft_batch("doc.txt", [self.SFT], corpus_text=self.CORPUS)
+        self.assertEqual(len(samples), 1)
+        s = samples[0]
+        self.assertEqual((s["instruction"], s["input"], s["output"]),
+                         (self.SFT["instruction"], self.SFT["input"], self.SFT["output"]),
+                         "素材不得自造: 三个字段必须沿用 SFT 原样")
+        self.assertEqual(s["task_type"], "比较")
+        self.assertTrue(s["chain_of_thought"].strip())
+        self.assertFalse(s["verifiable"])
+        self.assertIsNone(s["final_answer_correct"], "未验证不得填")
+        self.assertEqual(s["source"]["sft_id"], "sft-000042")
+        self.assertEqual(s["source"]["corpus_file"], "doc.txt")
 
-    def _share(self, samples):
-        sh = {}
-        for s in samples:
-            sh[s["task_type"]] = sh.get(s["task_type"], 0) + 1
-        return sh
+    def test_context_retrieved_from_corpus(self):
+        llm = self._FakeLLM()
+        COTConverter(llm_generator=llm).convert_sft_batch("doc.txt", [self.SFT], corpus_text=self.CORPUS)
+        self.assertIn("Loki 查询较弱", llm.calls[0], "回原文搜据的 context 必须进 prompt")
 
-    def test_short_material_fewer_than_ten(self):
-        # 短材料(无编号/无模板命中): 条数由体量定, 少于 10 条是正常的
-        cc, samples = self._run("本方案要求加强统筹协调，完善政策体系，强化监督评估。")
-        self.assertLess(len(samples), 10)
-        self.assertGreaterEqual(len(samples), 4)
+    def test_out_of_scope_sample_not_converted(self):
+        rec = dict(self.SFT, instruction="请总结材料的主要内容。")
+        cc = COTConverter(llm_generator=self._FakeLLM())
+        self.assertEqual(cc.convert_sft_batch("doc.txt", [rec], corpus_text=self.CORPUS), [])
+        self.assertEqual(cc.stats["out_of_scope"], 1)
 
-    def test_long_material_more_than_ten(self):
-        cc, samples = self._run(self._UNIT * 30)      # ~6 千字: 条数应 >10
-        self.assertGreater(len(samples), 10)
+    def test_uncertain_sample_exported_for_human_review(self):
+        tmp = workspace_tempdir()
+        try:
+            review = os.path.join(tmp, "review.jsonl")
+            rec = dict(self.SFT, instruction="请对比 A 与 B 的差异，并给出改进建议。")
+            cc = COTConverter(llm_generator=self._FakeLLM(), review_output=review)
+            self.assertEqual(cc.convert_sft_batch("doc.txt", [rec], corpus_text=self.CORPUS), [])
+            rows = [json.loads(l) for l in open(review, encoding="utf-8") if l.strip()]
+            self.assertEqual(len(rows), 1)
+            self.assertIn("判类难以区分", rows[0]["_review_reason"])
+        finally:
+            cleanup(tmp)
 
-    def test_mix_within_five_percent_for_both_sizes(self):
-        for txt in (self._UNIT * 4, self._UNIT * 30):
-            cc, samples = self._run(txt)
-            n = len(samples)
-            sh = self._share(samples)
-            for cls, target in (("解释", 0.20), ("建议", 0.30), ("比较", 0.20), ("推理", 0.30)):
-                got = sh.get(cls, 0) / float(n)
-                self.assertLessEqual(abs(got - target), 0.05,
-                                     "%s: %.2f vs %.2f (n=%d)" % (cls, got, target, n))
+    def test_reasoning_flags_only_when_machine_verified(self):
+        rec = {"id": "sft-000007", "instruction": "计算 3 × 4 的结果。",
+               "input": "材料：3 × 4 = 12", "output": "12", "source": "doc.txt"}
+        llm = self._FakeLLM(["1. 依据材料给出的算式 3 × 4 = 12，逐步得到乘积 12。\n因此结论是: 12"])
+        samples = COTConverter(llm_generator=llm).convert_sft_batch(
+            "doc.txt", [rec], corpus_text="材料：3 × 4 = 12")
+        self.assertEqual(len(samples), 1)
+        s = samples[0]
+        self.assertEqual(s["task_type"], "推理")
+        self.assertTrue(s["verifiable"])
+        self.assertTrue(s["final_answer_correct"], "算式重算通过才填")
+        self.assertTrue(s["reasoning_correct"])
 
-    def test_each_sample_uses_its_own_class_shot(self):
-        cc, samples = self._run(self._UNIT * 4)
-        prompts = cc.llm_generator.calls
-        for cls in ("解释", "建议", "比较"):
-            self.assertTrue(any("任务类别：%s" % cls in p for p in prompts), cls)
-        self.assertTrue(any("legal-advice-reddit" in p for p in prompts))
-        self.assertTrue(any("openai_summarize_comparisons" in p for p in prompts))
+    def test_retry_then_drop(self):
+        cc = COTConverter(llm_generator=self._FakeLLM(["短。", "短。", "短。"]), llm_max_attempts=3)
+        self.assertEqual(cc.convert_sft_batch("doc.txt", [self.SFT], corpus_text=self.CORPUS), [])
+        self.assertEqual(len(cc.llm_generator.calls), 3, "应重试到上限")
+        self.assertEqual(cc.stats["dropped"], 1, "重试后仍不过 -> 丢弃")
 
-    def test_thin_material_degrades_without_crash(self):
-        cc, samples = self._run("很短的一段说明文字。")
-        self.assertLessEqual(len(samples), 10)
+    def test_distribution_reported_not_pruned(self):
+        cc = COTConverter(llm_generator=self._FakeLLM())
+        samples = cc.convert_sft_batch("doc.txt", [self.SFT], corpus_text=self.CORPUS)
+        dist = cc.report_distribution(samples)
+        self.assertEqual(dist, {"比较": 1}, "只统计: 不为凑比例改判或删样本")
 
 
 if __name__ == "__main__":

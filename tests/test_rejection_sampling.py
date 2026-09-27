@@ -68,109 +68,42 @@ class TestInstructionRetry(unittest.TestCase):
         self.assertEqual(samples, [])
 
 
-class TestCOTRetry(unittest.TestCase):
-    GOOD_CHAIN = (
-        "1. 材料按编号逐条给出了五项措施。\n"
-        "2. 逐条核对第一条到第五条, 共5个条目。\n"
-        "因此结论是: 共5条。"
-    )
+class TestCOTRetryAndDrop(unittest.TestCase):
+    """COT 拒绝采样: 校验不过重试 llm_max_attempts 次, 仍不过 -> **丢弃**
 
-    # 无数字、句末完整的链: 数字一致性与截断校验都能过(重试只由"短。"触发)
-    SAFE_CHAIN = ("1. 依据材料中列出的条目逐条展开，每一步都能在材料中找到出处。\n"
-                  "2. 依次核对材料中的对应条目，保证中间结论与材料表述一致且可复核。\n"
-                  "因此结论是: 见材料。")
-
-    @staticmethod
-    def _calls_for(gen, cls):
-        """按类统计调用次数: 四类配额通道下, 一次生成会对四类分别调用"""
-        return sum(1 for p in getattr(gen, "prompts", []) if ("任务类别：%s" % cls) in p)
-
-    def test_reasoning_retries_on_bad_chain(self):
-        # 队列顺序 解释→建议→比较→推理: 前三次各返回"短。"(非推理类不重试),
-        # 推理类首败后重试 → 第二次合格停止
-        gen = FakeGenerator(["短。"] * 4 + [self.SAFE_CHAIN])
-        cc = COTConverter(llm_generator=gen, llm_max_attempts=3)
-        samples = cc._generate_cot_with_llm(LIST_TEXT, make_result(LIST_TEXT), task_type="推理")
-        self.assertEqual(self._calls_for(gen, "推理"), 2)          # 首败→重试
-        self.assertTrue(any(s["task_type"] == "推理" for s in samples))
-
-    def test_non_reasoning_no_retry(self):
-        # 建议类: 首次失败 → 不重试, 单次调用
-        gen = FakeGenerator(["短。"])
-        cc = COTConverter(llm_generator=gen, llm_max_attempts=3)
-        samples = cc._generate_cot_with_llm(LIST_TEXT, make_result(LIST_TEXT), task_type="建议")
-        self.assertEqual(self._calls_for(gen, "建议"), 1)          # 不重试
-        self.assertEqual([s for s in samples if s["task_type"] == "建议"], [])
-
-    def test_reasoning_gives_up_after_max_attempts(self):
-        gen = FakeGenerator(["短。"])
-        cc = COTConverter(llm_generator=gen, llm_max_attempts=3)
-        samples = cc._generate_cot_with_llm(LIST_TEXT, make_result(LIST_TEXT), task_type="推理")
-        self.assertEqual(self._calls_for(gen, "推理"), 3)          # 耗尽重试
-        self.assertFalse(any(s["task_type"] == "推理" for s in samples))
-
-
-
-
-class TestCOTExtractiveSeed(unittest.TestCase):
-    """模板未命中(英文散文/无结构材料)时按 skill 抽取式兜底生成问答对。
-
-    回归点: 旧实现把 COT 的 LLM 通道锁在中文模板种子上, 种子为空即一次都不调用
-    → 英文扫描件/散文整份零产出(实测 11 份)。
+    素材 = 既有 SFT 问答对(convert_sft_batch), 不再有按篇抽取的兜底问答对。
     """
 
-    EN_PROSE = (
-        "Meteorology is the study of the atmosphere and its phenomena. "
-        "Weather forecasts are produced by numerical models that solve the equations "
-        "of motion and thermodynamics. Observations from surface stations, radiosondes "
-        "and satellites feed these models. Forecasters must interpret the output "
-        "carefully and they should compare the guidance with local observations."
-    )
-    EN_CHAIN = (
-        "1. The material defines meteorology as the study of the atmosphere and its phenomena.\n"
-        "2. It states that forecasts come from numerical models fed by observations from "
-        "surface stations, radiosondes and satellites.\n"
-        "3. It advises that forecasters interpret the output carefully and compare the "
-        "guidance with local observations.\n"
-        "因此结论是: Meteorology is the study of the atmosphere and its phenomena."
-    )
+    SFT = {"id": "sft-000001",
+           "instruction": "请对比 ClickHouse 与 Loki 的查询能力差异。",
+           "input": "ClickHouse 查询能力强；Loki 查询较弱。",
+           "output": "ClickHouse 更强。",
+           "source": "doc.txt"}
+    GOOD_CHAIN = ("1. 材料给出两个对象各自的强弱项，逐项核对后落在同一结论上。\n"
+                  "2. 综合以上事实收敛到回答。\n因此结论是: ClickHouse 更强。")
 
-    def test_english_prose_has_no_template_seed(self):
-        ic = InstructionConverter(max_samples=5)
-        seeds = ic._generate_from_templates(self.EN_PROSE, make_result(self.EN_PROSE))
-        self.assertEqual(seeds, [], "前提: 该英文散文无模板命中")
+    def _cc(self, responses, attempts=3):
+        gen = FakeGenerator(responses)
+        return COTConverter(llm_generator=gen, llm_max_attempts=attempts), gen
 
-    def test_llm_channel_still_runs_without_template_seed(self):
-        # 模板为空时必须仍能生成: 四类配额通道会分别调用(样本类别取自各自的目标类别)
-        gen = FakeGenerator([self.EN_CHAIN])
-        cc = COTConverter(llm_generator=gen, llm_max_attempts=1)
-        samples = cc._generate_cot_with_llm(self.EN_PROSE, make_result(self.EN_PROSE),
-                                            task_type="建议")
-        self.assertGreaterEqual(gen.call_count, 1, "模板为空时必须仍调用 LLM(抽取式兜底)")
-        self.assertGreaterEqual(len(samples), 1, "英文散文应能产出 COT 样本")
-        for s0 in samples:
-            for k in ("instruction", "input", "chain_of_thought", "output", "task_type"):
-                self.assertIn(k, s0)
-            self.assertIn(s0["task_type"], ("解释", "推理", "建议", "比较"))
-            self.assertTrue(s0["input"], "抽取式种子的 input 必须是材料节选")
+    def test_no_retry_when_first_ok(self):
+        cc, gen = self._cc([self.GOOD_CHAIN])
+        samples = cc.convert_sft_batch("doc.txt", [self.SFT], corpus_text=self.SFT["input"])
+        self.assertEqual(gen.call_count, 1, "一次成功, 零额外成本")
+        self.assertEqual(len(samples), 1)
 
-    def test_seed_is_english_for_english_material(self):
-        cc = COTConverter()
-        seed = cc._extractive_seed(self.EN_PROSE, "en", "建议")
-        self.assertIn("material", seed["instruction"])
-        seed_zh = cc._extractive_seed(
-            "本方案要求各地区加强统筹协调，落实重点任务，健全工作机制，确保各项措施落地见效。",
-            "zh", "建议")
-        self.assertIn("材料", seed_zh["instruction"])
+    def test_retry_on_bad_chain(self):
+        cc, gen = self._cc(["短。", self.GOOD_CHAIN])
+        samples = cc.convert_sft_batch("doc.txt", [self.SFT], corpus_text=self.SFT["input"])
+        self.assertEqual(gen.call_count, 2, "首次过短 -> 重试")
+        self.assertEqual(len(samples), 1)
 
-    def test_chinese_unstructured_text_also_seeded(self):
-        # 中文无结构散文(无标题/编号)同样走兜底
-        txt = ("相关机制的原理在于热量传导，随着温差增大传导速度提升，"
-               "热量会从高温区域向低温区域持续流动。")
-        gen = FakeGenerator([self.EN_CHAIN])
-        cc = COTConverter(llm_generator=gen, llm_max_attempts=1)
-        cc._generate_cot_with_llm(txt, make_result(txt), task_type="解释")
-        self.assertGreaterEqual(gen.call_count, 1)
+    def test_gives_up_and_drops_after_max_attempts(self):
+        cc, gen = self._cc(["短。"] * 5)
+        samples = cc.convert_sft_batch("doc.txt", [self.SFT], corpus_text=self.SFT["input"])
+        self.assertEqual(gen.call_count, 3, "达上限即放弃")
+        self.assertEqual(samples, [])
+        self.assertEqual(cc.stats["dropped"], 1)
 
 
 if __name__ == "__main__":

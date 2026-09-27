@@ -135,12 +135,20 @@ class GenerationConcurrencyTest(unittest.TestCase):
         conc.run()
 
         def key(rows):
-            return sorted(json.dumps(r, ensure_ascii=False, sort_keys=True) for r in rows)
+            # id 由写入层按**写入序**分配(并发完成先后不同 -> 编号不同) ->
+            # 集合比对忽略 id, 只比样本内容; id 的连续唯一性单独断言
+            stripped = [{k: v for k, v in r.items() if k != "id"} for r in rows]
+            return sorted(json.dumps(r, ensure_ascii=False, sort_keys=True) for r in stripped)
 
         self.assertTrue(self._samples(serial.config.output_dir), "串行跑应有产出")
         self.assertEqual(key(self._samples(serial.config.output_dir)),
                          key(self._samples(conc.config.output_dir)),
                          "并发产出的样本集合必须与串行完全一致")
+
+        rows = self._samples(conc.config.output_dir)
+        ids = sorted(r["id"] for r in rows if r.get("id"))
+        self.assertEqual(ids, ["sft-%06d" % i for i in range(1, len(ids) + 1)],
+                         "id 必须连续且唯一(缺失/sft- 前缀错都会在此暴露)")
 
     def test_failure_of_one_source_does_not_block_others(self):
         p, stub, _, _ = self._build(workers=4, fail_keywords=("开源许可证",))

@@ -84,8 +84,8 @@ class PipelineEndToEndTest(unittest.TestCase):
         self.assertEqual(pipeline.stats.total_files, 4)
         self.assertEqual(pipeline.stats.files_processed, 4)
 
-        # 三种数据集都要产出
-        for name in ("pretrain", "instruction", "cot"):
+        # 预训练/指令微调必然产出
+        for name in ("pretrain", "instruction"):
             self.assertTrue(os.path.exists(os.path.join(self.out_dir, name, "data.jsonl")),
                             f"{name} 数据集未生成")
             self.assertGreater(self._count(name), 0, f"{name} 数据集为空")
@@ -94,6 +94,12 @@ class PipelineEndToEndTest(unittest.TestCase):
                 metadata = json.load(f)
             self.assertEqual(metadata["status"], "completed")
             self.assertEqual(metadata["records"], self._count(name))
+
+        # COT 以既有 SFT 问答对为素材且需要 LLM 生成器 -> 本用例(未启用 LLM)应跳过并写明原因
+        with open(os.path.join(self.out_dir, "cot", "metadata.json"), encoding="utf-8") as f:
+            cot_meta = json.load(f)
+        self.assertEqual(cot_meta["status"], "skipped")
+        self.assertIn("LLM", cot_meta["reason"])
 
         # 过短文本应被过滤并记录原因
         rejected_path = os.path.join(self.out_dir, "rejected.jsonl")

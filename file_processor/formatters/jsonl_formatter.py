@@ -41,7 +41,7 @@ class JSONLFormatter:
     """
 
     # 需要注入通用字段的数据集 -> 字段名(其余数据集原样写出)
-    _INJECT = {"instruction": ("id", "language")}
+    _INJECT = {"instruction": ("id", "language"), "cot": ("id",)}
     # id 前缀(8.2: {数据集}-{序号})
     _ID_PREFIX = {"instruction": "sft", "pretrain": "pretrain", "cot": "cot"}
 
@@ -96,9 +96,12 @@ class JSONLFormatter:
                         continue
                     self._seen[name].add(self._record_key(rec))
                     # 续跑: id 序号接续历史最大值, 避免与已有 id 撞号
-                    tail = str(rec.get("id") or "").rsplit("-", 1)[-1]
+                    rid = str(rec.get("id") or "")
+                    tail = rid.rsplit("-", 1)[-1]
                     if tail.isdigit():
-                        self._seq[name] = max(self._seq[name], int(tail))
+                        cls = str(rec.get("task_type") or "").strip() if name == "cot" else ""
+                        key = "%s/%s" % (name, cls) if cls else name
+                        self._seq[key] = max(self._seq.get(key, 0), int(tail))
             if not self._seq[name]:
                 self._seq[name] = len(self._seen[name])
         self._prepared.add(name)
@@ -144,8 +147,14 @@ class JSONLFormatter:
             return record
         out = dict(record)
         if "id" in fields and not out.get("id"):
-            self._seq[name] = self._seq.get(name, 0) + 1
-            out["id"] = "%s-%06d" % (self._ID_PREFIX.get(name, name), self._seq[name])
+            # COT 的 id 带任务类型且**按类分别编号**(8.2: cot-{任务类型}-{序号})
+            cls = str(out.get("task_type") or "").strip() if name == "cot" else ""
+            key = "%s/%s" % (name, cls) if cls else name
+            self._seq[key] = self._seq.get(key, 0) + 1
+            if cls:
+                out["id"] = "cot-%s-%06d" % (cls, self._seq[key])
+            else:
+                out["id"] = "%s-%06d" % (self._ID_PREFIX.get(name, name), self._seq[key])
         if "language" in fields and not out.get("language"):
             text = "%s\n%s" % (out.get("instruction") or "", out.get("output") or "")
             out["language"] = self._sample_language(text)

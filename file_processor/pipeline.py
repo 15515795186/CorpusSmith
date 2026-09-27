@@ -289,9 +289,12 @@ class FileProcessorPipeline:
                 "instruction": self.instruction_converter,
                 "cot": self.cot_converter,
             }
-            for name in ("pretrain", "instruction", "cot"):
+            for name in ("pretrain", "instruction"):
                 if name in self.config.output_types:
                     self._convert_and_output(name, cleaned_results, converters[name])
+            # COT 以 SFT 产出为**唯一素材**(样本驱动) -> 必须在 instruction 阶段之后单独跑
+            if "cot" in self.config.output_types:
+                self._convert_cot(cleaned_results)
 
             # 7. 统计与运行报告
             self.stats.print_summary()
@@ -677,6 +680,180 @@ class FileProcessorPipeline:
         )
         logger.info("[Output] [%s] %d records (%d sources) -> %s",
                     name, total_samples, written_sources, output_path)
+
+    def _convert_cot(self, cleaned_results) -> None:
+        """COT 阶段: 以 SFT 产出为**唯一素材**(样本驱动), 按来源分组生成
+
+        - 素材 = instruction/data.jsonl 里的问答对本身(不得自造); 判类只在样本层:
+          属于四类 -> 生成; 明确不属于四类 -> 不进 COT(计数留证); 判类难以区分 ->
+          导出待人工审核清单, 不硬塞任何一类。
+        - 语料原文: 本轮清洗结果优先, 缺失回退读取缓存(不重读文件、不重复 OCR),
+          用于"回原文搜据"拼 context。
+        - 并发与写盘纪律与生成阶段一致: 来源级并发, 写盘集中在主线程。
+        - 生成结束后四类分布**只统计只报告**(不裁剪、不改判、不删样本)。
+        """
+        from tqdm import tqdm
+
+        name = "cot"
+        if getattr(self.cot_converter, "llm_generator", None) is None:
+            logger.warning("[COT] 未启用 LLM 生成器(enable_llm=false) —— 思维链无法生成, 跳过 COT 数据集")
+            self.formatter.write_metadata(name, status="skipped",
+                                          reason="需要 LLM 生成器(enable_llm=true)")
+            return
+        sft_path = self.formatter.get_path("instruction")
+        if not os.path.exists(sft_path):
+            logger.error("[COT] 未找到 SFT 产出 %s —— COT 以 SFT 样本为素材, 请先跑 instruction 阶段",
+                         sft_path)
+            self.formatter.write_metadata(name, status="skipped",
+                                          reason="未找到 SFT 产出(需先跑 instruction 阶段)")
+            return
+
+        records: List[Dict] = []
+        with open(sft_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    records.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        if not records:
+            logger.warning("[COT] SFT 产出无记录, 无可生成素材")
+            self.formatter.write_metadata(name, status="skipped", reason="SFT 产出无记录")
+            return
+
+        by_source: Dict[str, List[Dict]] = {}
+        for r in records:
+            src = os.path.basename(str(r.get("source") or "").strip())
+            if src:
+                by_source.setdefault(src, []).append(r)
+        logger.info("[COT] 素材: %d 条 SFT 样本 / %d 个来源 -> 逐来源判类并生成",
+                    len(records), len(by_source))
+
+        # 语料原文: 本轮清洗结果优先 -> 读取缓存兜底(按文件名对齐)
+        text_by_name = {}
+        for res in cleaned_results:
+            if res.success and res.text:
+                text_by_name[os.path.basename(res.filepath)] = res.text
+        path_by_name = {}
+        for fp in self._scan_files():
+            path_by_name.setdefault(os.path.basename(fp), fp)
+
+        existing = self.formatter.read_sources(name) if self.config.resume else set()
+        pending = [s for s in by_source if s not in existing]
+        if existing:
+            logger.info("[Output] [%s] resume: 已有 %d 个来源，跳过", name, len(existing))
+
+        workers = self._generation_workers(self.cot_converter, len(pending))
+        total_samples = total_generated = written_sources = empty_sources = failures = 0
+
+        pbar = tqdm(total=len(by_source), desc=f"[Output] {name}", unit="src",
+                    ncols=70, bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}]")
+        pbar.update(len(by_source) - len(pending))
+
+        def corpus_for(src_name: str) -> str:
+            if src_name in text_by_name:
+                return text_by_name[src_name]
+            fp = path_by_name.get(src_name)
+            if fp is not None and getattr(self, "cache", None) is not None:
+                cached = self.cache.get(fp)
+                if cached is not None:
+                    return cached.get("text", "") or ""
+            logger.warning("[COT] 语料原文不可得(%s): 该来源的思维链只能引用样本自带材料", src_name)
+            return ""
+
+        def consume(src_name, samples):
+            nonlocal total_samples, total_generated, written_sources, empty_sources
+            generated, written = self._write_converted(name, samples)
+            total_generated += generated
+            total_samples += written
+            if written:
+                written_sources += 1
+            elif not generated:
+                empty_sources += 1
+                logger.warning("[Output] [%s] %s 未产出样本(判类未命中/校验全剔/调用失败), "
+                               "未写入输出, resume 重跑会补", name, src_name)
+            pbar.update(1)
+
+        def on_failure(src_name, exc):
+            nonlocal failures
+            failures += 1
+            logger.error("COT 转换失败 [%s] %s: %s", name, src_name, exc)
+            pbar.update(1)
+
+        def run_one(src_name):
+            return self.cot_converter.convert_sft_batch(
+                src_name, by_source[src_name], corpus_for(src_name),
+                corpus_type=os.path.splitext(src_name)[1].lstrip("."))
+
+        if workers <= 1:
+            for src_name in pending:
+                try:
+                    samples = run_one(src_name)
+                except Exception as e:            # noqa: BLE001 - 单份失败不得中断整轮
+                    on_failure(src_name, e)
+                    continue
+                consume(src_name, samples)
+        else:
+            logger.info("[COT] 来源级并发 %d 路（待生成 %d 份）", workers, len(pending))
+            with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="gen-cot") as ex:
+                futures = {ex.submit(run_one, s): s for s in pending}
+                for fut in as_completed(futures):
+                    src_name = futures[fut]
+                    try:
+                        samples = fut.result()
+                    except Exception as e:        # noqa: BLE001
+                        on_failure(src_name, e)
+                        continue
+                    consume(src_name, samples)
+        pbar.close()
+
+        if failures or empty_sources:
+            logger.warning("[Output] [%s] 生成异常合计 %d 份（硬失败 %d / 空产出 %d）"
+                           "—— 均未写入输出，resume 重跑会补",
+                           name, failures + empty_sources, failures, empty_sources)
+        self.stats.generation_failures += failures
+        self.stats.generation_empty += empty_sources
+        if total_generated != total_samples:
+            logger.info("[Output] [%s] 跳过与数据集中已有记录完全相同的样本 %d 条",
+                        name, total_generated - total_samples)
+        self.stats.cot_samples = total_samples
+
+        # 四类分布: 只统计只报告(读回落盘结果, 口径=最终数据集)
+        all_samples: List[Dict] = []
+        out_path = self.formatter.get_path(name)
+        if os.path.exists(out_path):
+            with open(out_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        all_samples.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+        self.cot_converter.report_distribution(all_samples)
+
+        self.formatter.write_metadata(
+            name,
+            sources=len(self.formatter.read_sources(name)),
+            sources_this_run=written_sources,
+            generated_at=datetime.now().isoformat(timespec="seconds"),
+            elapsed_seconds=round(time.time() - self._t0, 1),
+            note="素材 = instruction/data.jsonl 的 SFT 问答对(样本驱动); 分布只统计不裁剪",
+            stats=dict(self.cot_converter.stats),
+            config={
+                "enable_llm": self.config.enable_llm,
+                "llm_max_concurrency": self.config.llm_max_concurrency,
+                "sample_check_ratio": self.config.sample_check_ratio,
+                "llm_max_attempts": self.config.llm_max_attempts,
+                "distribution_tolerance": self.config.cot_distribution_tolerance,
+                "resume": self.config.resume,
+            },
+        )
+        logger.info("[Output] [%s] %d records (%d sources) -> %s",
+                    name, total_samples, written_sources, out_path)
 
     def _generation_workers(self, converter, n_pending: int) -> int:
         """生成阶段的并发路数
