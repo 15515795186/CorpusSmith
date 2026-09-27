@@ -111,9 +111,10 @@ class ConfigTest(unittest.TestCase):
             else:
                 os.environ["DEEPSEEK_API_KEY"] = old
 
-        ds = ProcessorConfig(llm_provider="dashscope")
-        ds.dashscope_api_key = "ds-config"
-        self.assertEqual(ds.api_key(), "ds-config")
+        # 文本链 key 只认 deepseek; dashscope key 仅供 OCR 视觉链
+        ocr = ProcessorConfig(dashscope_api_key="ds-config")
+        self.assertEqual(ocr.ocr_api_key(), "ds-config")
+        self.assertNotEqual(ocr.api_key(), "ds-config")
 
     def test_provider_resolution_and_ocr_key_separation(self):
         """模型/端点按 provider 解析; OCR(视觉) key 与文本 key 分离"""
@@ -139,10 +140,12 @@ class ConfigTest(unittest.TestCase):
             if old_ds is not None:
                 os.environ["DEEPSEEK_API_KEY"] = old_ds
 
-        d = ProcessorConfig(llm_provider="dashscope", llm_cot_model="qwen3.5-max")
-        self.assertEqual(d.llm_model(), "qwen3.5-plus")
-        self.assertEqual(d.cot_model(), "qwen3.5-max")
-        self.assertTrue(d.llm_base_url().startswith("https://dashscope.aliyuncs.com/"))
+        # 文本链已全量切 DeepSeek: dashscope 不参与文本生成(仅 OCR 保留其 key)
+        e = ProcessorConfig(llm_cot_model="deepseek-v4-pro")
+        self.assertEqual(e.llm_model(), "deepseek-flash")
+        self.assertEqual(e.cot_model(), "deepseek-v4-pro")
+        self.assertEqual(e.llm_base_url(), "https://api.deepseek.com/")
+        self.assertFalse(hasattr(e, "dashscope_model"))
 
     def test_repo_run_configs_are_valid(self):
         """仓库内所有 run_config*.json 都能解析, 且关键项合法"""

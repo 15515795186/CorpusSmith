@@ -16,13 +16,11 @@
     "cot"
   ],
   "enable_llm": true,
-  "dashscope_model": "qwen3.5-plus",
   "llm_max_attempts": 3,
   "llm_batch_size": 5,
   "llm_max_concurrency": 8,
   "llm_temperature": 0.3,
   "llm_max_tokens": 4096,
-  "cot_distribution_enforce": true,
   "cot_distribution_tolerance": 0.05,
   "sample_check_ratio": 0.1,
   "review_output": "datasets_v3_20260927/review_output_cot.jsonl",

@@ -149,7 +149,6 @@ class FileProcessorPipeline:
             max_samples=config.max_samples.get("cot", 0),
             llm_generator=self.cot_llm_generator if config.enable_llm else None,
             sample_check_ratio=config.sample_check_ratio,
-            distribution_enforce=config.cot_distribution_enforce,
             distribution_tolerance=config.cot_distribution_tolerance,
             review_output=config.review_output,
             verify_code_exec=config.verify_code_exec,
@@ -191,8 +190,9 @@ class FileProcessorPipeline:
     def _build_generator(self, model: str, max_tokens: int):
         """按当前 provider 构造生成器(DeepSeek / DashScope 共用同一实现)"""
         provider = self.config.llm_provider
-        if provider not in ("dashscope", "deepseek"):
-            raise ValueError("llm_provider 只支持 dashscope / deepseek, 收到: %s" % provider)
+        if provider != "deepseek":
+            raise ValueError("文本链只支持 deepseek(百炼已停用); "
+                             "dashscope 仅用于 OCR 视觉链, 收到: %s" % provider)
         from .llm.dashscope_generator import DashScopeGenerator
         return DashScopeGenerator(
             api_key=self.config.api_key(),

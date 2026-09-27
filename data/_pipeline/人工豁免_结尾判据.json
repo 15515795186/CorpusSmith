@@ -3,7 +3,8 @@
   "decided_at": "2026-09-26",
   "decided_by": "人工复核(用户确认)",
   "scoring": {
-    "model": "qwen-plus",
+    "model_at_review": "qwen-plus",
+    "model_current": "deepseek-flash",
     "dimensions": "5 维各 1~5 分, 总分 25",
     "pass_rule": "每维 ≥3 且总分 ≥18 (v3 轮配置覆盖默认 20)"
   },

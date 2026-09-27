@@ -135,8 +135,8 @@ def parse_args():
 
     # LLM 生成
     parser.add_argument("--llm", action="store_true", help="启用LLM生成指令/COT")
-    parser.add_argument("--llm-provider", default=None, choices=["dashscope", "deepseek"],
-                        help="LLM供应商 (default: deepseek)")
+    parser.add_argument("--llm-provider", default=None, choices=["deepseek"],
+                        help="文本链供应商 (default: deepseek; dashscope 仅用于 OCR 视觉链)")
     parser.add_argument("--llm-model", default=None, help="LLM模型名 (覆盖默认)")
 
     # 质量评分
@@ -235,10 +235,7 @@ def build_config(args) -> ProcessorConfig:
     if args.llm_provider:
         config.llm_provider = args.llm_provider
     if args.llm_model:
-        if config.llm_provider == "deepseek":
-            config.deepseek_model = args.llm_model
-        else:
-            config.dashscope_model = args.llm_model
+        config.deepseek_model = args.llm_model
 
     # ---- 质量评分 ----
     if args.no_quality:

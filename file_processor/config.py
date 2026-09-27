@@ -53,14 +53,13 @@ class ProcessorConfig:
 
     # ========== LLM 生成（可选）==========
     enable_llm: bool = False
-    # 文本 LLM: 默认走 DeepSeek 官方 OpenAI 兼容端点(百炼欠费后的主通道)
-    llm_provider: str = "deepseek"          # deepseek | dashscope
+    # 文本 LLM: 走 DeepSeek 官方 OpenAI 兼容端点(百炼欠费后文本链已全量切换)
+    llm_provider: str = "deepseek"          # 文本链供应商标识(当前仅 deepseek)
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com/"
     deepseek_model: str = "deepseek-flash"
-    # DashScope: 文本生成已切 DeepSeek, 此处仅保留给 OCR 视觉链(qwen-vl-plus)
+    # DashScope: 仅保留给 OCR 视觉链(qwen-vl-plus), 不再参与文本生成
     dashscope_api_key: str = ""
-    dashscope_model: str = "qwen3.5-plus"  # 仅当 llm_provider="dashscope" 时用于文本生成
     llm_cot_model: str = ""                # COT 转换器专用模型; 留空则与主模型共用
     llm_cot_max_tokens: int = 0            # COT 专用输出上限; 0 = 跟随 llm_max_tokens(deepseek-r1 思考链偏长, 建议 3000-4000)
     llm_max_attempts: int = 3              # 拒绝采样(失败重试制): LLM 生成后硬校验不过则重试的上限; 1=不重试
@@ -69,8 +68,9 @@ class ProcessorConfig:
     llm_max_tokens: int = 3072            # DeepSeek 为推理型模型, 思考 token 也计入上限, 预算过小会把可见输出挤空
 
     # ========== 样本级校验(转换后,从严) ==========
-    cot_distribution_enforce: bool = True     # COT 四类分布硬门禁: 超配裁剪 + 欠配告警
-    cot_distribution_tolerance: float = 0.05  # 分布偏差容忍(《数据集介绍.md》4.5 ±5%)
+    # COT 四类分布: 只统计、只报告, 不裁剪也不改判(实事求是 —— 差额只能在素材层解决)。
+    # tolerance 仅用于达标判定与告警(《数据集介绍.md》4.5 ±5%)。
+    cot_distribution_tolerance: float = 0.05
     sample_check_ratio: float = 0.1           # 转换后 LLM 语义抽检比例(0=关闭; 抽检幻觉/跳步/类别匹配)
     verify_code_exec: bool = False            # 代码题运行验证(有安全门槛, 默认关)
     review_output: str = ""                   # 争议/未决样本导出路径(JSONL, 供人工双人审核); 空=仅记日志
@@ -153,23 +153,16 @@ class ProcessorConfig:
 
     # ---------- 供应商解析: 文本 LLM 与 OCR(视觉) 各一套 key ----------
     def llm_model(self) -> str:
-        """当前 provider 的文本生成模型名"""
-        if self.llm_provider == "deepseek":
-            return self.deepseek_model or "deepseek-flash"
-        return self.dashscope_model
+        """文本生成模型名(文本链已全量切 DeepSeek)"""
+        return self.deepseek_model or "deepseek-flash"
 
     def llm_base_url(self) -> str:
-        """当前 provider 的 OpenAI 兼容端点"""
-        if self.llm_provider == "deepseek":
-            return self.deepseek_base_url or "https://api.deepseek.com/"
-        return os.getenv("DASHSCOPE_BASE_URL",
-                         "https://dashscope.aliyuncs.com/compatible-mode/v1")
+        """文本链的 OpenAI 兼容端点"""
+        return self.deepseek_base_url or "https://api.deepseek.com/"
 
     def api_key(self) -> str:
-        """当前文本 LLM provider 的 key（配置优先，其次环境变量）"""
-        if self.llm_provider == "deepseek":
-            return self.deepseek_api_key or os.getenv("DEEPSEEK_API_KEY", "")
-        return self.dashscope_api_key or os.getenv("DASHSCOPE_API_KEY", "")
+        """文本链 key（配置优先，其次环境变量 DEEPSEEK_API_KEY）"""
+        return self.deepseek_api_key or os.getenv("DEEPSEEK_API_KEY", "")
 
     def ocr_api_key(self) -> str:
         """OCR(视觉链 qwen-vl)专用 key —— 与文本 LLM 的 provider 无关"""
@@ -180,7 +173,5 @@ class ProcessorConfig:
         return self.llm_cot_model or self.llm_model()
 
     def quality_model_resolved(self) -> str:
-        """质量评分模型: 配置留空时跟随 provider 主模型"""
-        if self.quality_model:
-            return self.quality_model
-        return "qwen-plus" if self.llm_provider == "dashscope" else self.llm_model()
+        """质量评分模型: 配置留空时跟随文本链主模型"""
+        return self.quality_model or self.llm_model()

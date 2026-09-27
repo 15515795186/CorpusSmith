@@ -2,7 +2,7 @@
 PPL(困惑度)过滤器 —— 流水线里的一道免费预筛闸门
 ================================================
 
-位置: 清洗+启发式过滤(quality_filter)之后、LLM 质量评分(qwen-plus)之前。
+位置: 清洗+启发式过滤(quality_filter)之后、LLM 质量评分(deepseek-flash)之前。
 目标: 在花 API 钱之前, 用本地小 LM 把"语言不自然"的文本拦掉
       (机器翻译腔 / OCR 噪声 / 乱码拼接), 语义层面的低质仍由后面的 LLM 评分把关。
 
@@ -16,7 +16,7 @@ PPL(困惑度)过滤器 —— 流水线里的一道免费预筛闸门
     绝不拍脑袋定绝对值: 政务公文与维基百科的 PPL 基准完全不同。
 
 实现注记:
-  - 延迟加载 transformers, 未启用时零 import 成本(与 dashscope generator 同模式)
+  - 延迟加载 transformers, 未启用时零 import 成本(与 llm/ 生成器同模式)
   - 模型缓存根可显式传入(cache_dir / config.ppl_cache_dir), 不依赖外部 HUGGINGFACE_HUB_CACHE;
     加载失败 fail fast 并给出可执行的提示, 不静默回退成"全部放行"
   - 因果 LM 的 per-token 平均交叉熵 = loss, PPL = exp(loss), 由 labels=input_ids 直接得到

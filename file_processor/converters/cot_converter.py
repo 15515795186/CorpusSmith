@@ -50,7 +50,6 @@ class COTConverter:
 
     def __init__(self, max_samples: int = 0, llm_generator=None,
                  sample_check_ratio: float = 0.0,
-                 distribution_enforce=None,
                  distribution_tolerance: float = 0.05,
                  review_output: str = "",
                  verify_code_exec: bool = False,
@@ -61,7 +60,6 @@ class COTConverter:
         # 样本级 LLM 语义抽检(转换后, 从严; 争议样本移出主集)
         self.sample_check_ratio = sample_check_ratio
         # 兼容旧配置: 分布硬门禁已按规范改为"只统计不裁剪", 该开关不再裁剪样本
-        self.distribution_enforce = distribution_enforce
         self.distribution_tolerance = distribution_tolerance
         self.review_output = review_output          # 争议样本导出路径(人工双人审核)
         self.verify_code_exec = verify_code_exec    # 代码题运行验证(默认关)
