@@ -64,7 +64,6 @@ class ProcessorConfig:
     llm_cot_model: str = ""                # COT 转换器专用模型; 留空则与主模型共用
     llm_cot_max_tokens: int = 0            # COT 专用输出上限; 0 = 跟随 llm_max_tokens(deepseek-r1 思考链偏长, 建议 3000-4000)
     llm_max_attempts: int = 3              # 拒绝采样(失败重试制): LLM 生成后硬校验不过则重试的上限; 1=不重试
-    llm_batch_size: int = 5
     llm_max_concurrency: int = 3
     llm_temperature: float = 0.3
     llm_max_tokens: int = 3072            # DeepSeek 为推理型模型, 思考 token 也计入上限, 预算过小会把可见输出挤空
@@ -118,8 +117,6 @@ class ProcessorConfig:
     target_languages: list = field(default_factory=lambda: ["zh", "en"])
     keep_unknown_language: bool = True
 
-    # ========== 数据增强 ==========
-    enable_cot_augmentation: bool = False  # 是否启用基于模板的COT自动生成
 
     @classmethod
     def from_json(cls, path: str) -> "ProcessorConfig":
