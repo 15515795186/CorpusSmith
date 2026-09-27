@@ -108,3 +108,76 @@ class JSONLFormatterTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SFTFieldEnrichTest(unittest.TestCase):
+    """SFT 输出补 id/language(《数据集介绍.md》3.2): 写入层注入, 不参与去重指纹"""
+
+    def setUp(self):
+        self._tmp = workspace_tempdir()
+        self.out = os.path.join(self._tmp, "datasets")
+
+    def tearDown(self):
+        cleanup(self._tmp)
+
+    @staticmethod
+    def _sft(instruction, output, source="a.txt"):
+        return {"instruction": instruction, "input": "", "output": output, "source": source}
+
+    def _rows(self, name):
+        with open(os.path.join(self.out, name, "data.jsonl"), encoding="utf-8") as f:
+            return [json.loads(x) for x in f if x.strip()]
+
+    def test_instruction_gets_id_and_language(self):
+        f = JSONLFormatter(self.out)
+        f.write_batch("instruction", [self._sft("请总结要点。", "本方案要求加强统筹协调。")])
+        rec = self._rows("instruction")[0]
+        self.assertEqual(rec["id"], "sft-000001")
+        self.assertEqual(rec["language"], "zh")
+
+    def test_ids_are_sequential_and_stable(self):
+        f = JSONLFormatter(self.out)
+        f.write_batch("instruction", [
+            self._sft("问题一？", "答案一。"),
+            self._sft("问题二？", "答案二。"),
+        ])
+        f.write_batch("instruction", [self._sft("问题三？", "答案三。")])
+        self.assertEqual([r["id"] for r in self._rows("instruction")],
+                         ["sft-000001", "sft-000002", "sft-000003"])
+
+    def test_mixed_technames_count_as_chinese(self):
+        """中文句夹英文专名应判 zh(规范 language 取 zh/en, 不留 mixed)"""
+        f = JSONLFormatter(self.out)
+        f.write_batch("instruction", [self._sft(
+            "对比 ClickHouse、Loki 和 Elasticsearch 的查询能力差异。",
+            "Loki 的查询功能较弱, Elasticsearch 支持复杂全文检索。")])
+        self.assertEqual(self._rows("instruction")[0]["language"], "zh")
+
+    def test_english_language_detected(self):
+        f = JSONLFormatter(self.out)
+        f.write_batch("instruction", [self._sft("Summarize the report.",
+                                                "The plan requires coordinated work.")])
+        self.assertEqual(self._rows("instruction")[0]["language"], "en")
+
+    def test_pretrain_records_untouched(self):
+        f = JSONLFormatter(self.out)
+        rec = {"text": "hello", "meta": {"source": "a.txt"}}
+        f.write_batch("pretrain", [rec])
+        on_disk = self._rows("pretrain")[0]
+        self.assertNotIn("id", on_disk)
+        self.assertNotIn("language", on_disk)
+        self.assertEqual(on_disk, rec)
+
+    def test_duplicate_still_skipped_after_enrich(self):
+        f = JSONLFormatter(self.out)
+        f.write_batch("instruction", [self._sft("同一问题？", "同一答案。")])
+        f.write_batch("instruction", [self._sft("同一问题？", "同一答案。")])
+        self.assertEqual(len(self._rows("instruction")), 1)
+
+    def test_resume_continues_id_sequence(self):
+        first = JSONLFormatter(self.out)
+        first.write_batch("instruction", [self._sft("问题一？", "答案一。")])
+        resumed = JSONLFormatter(self.out, overwrite=False)
+        resumed.write_batch("instruction", [self._sft("问题二？", "答案二。")])
+        self.assertEqual([r["id"] for r in self._rows("instruction")],
+                         ["sft-000001", "sft-000002"])

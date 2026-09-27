@@ -23,13 +23,27 @@ import hashlib
 import json
 import logging
 import os
+import re
 from typing import Any, Dict, Iterable, List, Optional, Set
+
+from ..utils.lang_detect import detect_language
 
 logger = logging.getLogger(__name__)
 
 
 class JSONLFormatter:
-    """按数据集类型写入 data.jsonl / metadata.json"""
+    """按数据集类型写入 data.jsonl / metadata.json
+
+    按《数据集介绍.md》3.2 的推荐字段, 对 SFT(instruction)输出补 ``id`` 与 ``language``:
+    id 形如 ``sft-000001``(8.2 命名规范), language 取 lang_detect 的 zh/en/mixed/unknown。
+    两个字段在写入时注入, **不参与去重指纹** —— 否则内容完全相同的样本会因 id
+    不同被当成两条写进数据集。其余数据集(pretrain/cot)不注入, 保持原样。
+    """
+
+    # 需要注入通用字段的数据集 -> 字段名(其余数据集原样写出)
+    _INJECT = {"instruction": ("id", "language")}
+    # id 前缀(8.2: {数据集}-{序号})
+    _ID_PREFIX = {"instruction": "sft", "pretrain": "pretrain", "cot": "cot"}
 
     def __init__(self, output_dir: str, prefix: str = "", overwrite: bool = True):
         self.output_dir = output_dir
@@ -38,6 +52,8 @@ class JSONLFormatter:
         self._prepared: Set[str] = set()
         # 跨批次/跨运行的样本级精确去重（同一数据集内完全相同的记录只写一次）
         self._seen: Dict[str, Set[str]] = {}
+        # 各数据集已分配的 id 序号(续跑时接续历史最大值)
+        self._seq: Dict[str, int] = {}
         self.duplicates_skipped = 0
         os.makedirs(output_dir, exist_ok=True)
 
@@ -66,6 +82,7 @@ class JSONLFormatter:
             os.remove(path)
             logger.info("[Output] 已清空旧文件: %s", path)
         self._seen[name] = set()
+        self._seq[name] = 0
         if not self.overwrite and os.path.exists(path):
             # 续跑模式：载入已有记录的规范化指纹，保证新记录不与历史样本重复
             with open(path, "r", encoding="utf-8") as f:
@@ -78,6 +95,12 @@ class JSONLFormatter:
                     except json.JSONDecodeError:
                         continue
                     self._seen[name].add(self._record_key(rec))
+                    # 续跑: id 序号接续历史最大值, 避免与已有 id 撞号
+                    tail = str(rec.get("id") or "").rsplit("-", 1)[-1]
+                    if tail.isdigit():
+                        self._seq[name] = max(self._seq[name], int(tail))
+            if not self._seq[name]:
+                self._seq[name] = len(self._seen[name])
         self._prepared.add(name)
 
     def prepare_all(self, names: Iterable[str]):
@@ -85,10 +108,48 @@ class JSONLFormatter:
             self.prepare(name)
 
     # ---------- 写入 ----------
-    @staticmethod
-    def _record_key(record: Dict[str, Any]) -> str:
-        raw = json.dumps(record, ensure_ascii=False, sort_keys=True)
+    @classmethod
+    def _record_key(record_cls, record: Dict[str, Any]) -> str:
+        """内容指纹: 忽略 _INJECT 注入的字段, 保证去重判据只取决于样本内容"""
+        skip = {f for fields in record_cls._INJECT.values() for f in fields}
+        raw = json.dumps({k: v for k, v in record.items() if k not in skip},
+                         ensure_ascii=False, sort_keys=True)
         return hashlib.blake2b(raw.encode("utf-8"), digest_size=16).hexdigest()
+
+    @staticmethod
+    def _sample_language(text: str) -> str:
+        """样本语言(规范 3.2 的 language 取 zh/en 口径)
+
+        中文样本常夹技术专有名词(ClickHouse/Loki/Elasticsearch、PDF/DOCX…), 字母数
+        可能反超汉字数, 单纯按字符数会把中文样本判成 en(实测 runF 前 40 条就有一批)。
+        故: 汉字数 >= 10 且占中英字符 >= 10% 即视为中文样本; 纯/主英文样本判 en;
+        极短或符号为主的文本回退 lang_detect(可返回 zh/en/mixed/unknown)。
+        """
+        zh = len(re.findall(r"[\u4e00-\u9fff]", text))
+        en = len(re.findall(r"[A-Za-z]", text))
+        if zh >= 10 and zh >= 0.10 * (zh + en):
+            return "zh"
+        if en >= 10:
+            return "en"
+        return detect_language(text)
+
+    def _enrich(self, name: str, record: Dict[str, Any]) -> Dict[str, Any]:
+        """按数据集补通用字段; 未登记的数据集原样返回
+
+        - id: 写入序分配(单一写线程 -> 稳定), 已有 id 的记录不覆盖
+        - language: 由 instruction + output 判定, 已有值不覆盖
+        """
+        fields = self._INJECT.get(name)
+        if not fields:
+            return record
+        out = dict(record)
+        if "id" in fields and not out.get("id"):
+            self._seq[name] = self._seq.get(name, 0) + 1
+            out["id"] = "%s-%06d" % (self._ID_PREFIX.get(name, name), self._seq[name])
+        if "language" in fields and not out.get("language"):
+            text = "%s\n%s" % (out.get("instruction") or "", out.get("output") or "")
+            out["language"] = self._sample_language(text)
+        return out
 
     def write_batch(self, name: str, records: List[Dict[str, Any]]) -> int:
         """写入一批记录，跳过数据集中已存在的完全相同记录；返回实际写入条数"""
@@ -106,7 +167,7 @@ class JSONLFormatter:
                     self.duplicates_skipped += 1
                     continue
                 seen.add(key)
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                f.write(json.dumps(self._enrich(name, record), ensure_ascii=False) + "\n")
                 written += 1
         return written
 
