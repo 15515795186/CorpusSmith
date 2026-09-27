@@ -12,16 +12,18 @@ from typing import Optional
 @dataclass
 class ProcessorConfig:
     # ========== 路径 ==========
-    # 默认指向仓库内真实的 data/ 目录结构；可通过 JSON 配置或 CLI 覆盖
+    # 默认输入 = **项目最终语料**: 第三版爬取语料(data/爬取语料_v3, 8 类 × 3 = 24 份)
+    # 初版(data/ 下 8 个目录, 400 份)与第二版(data/爬取语料_v2, 40 份)降级为测试用例,
+    # 需要时用 run_config.json / run_config_v2.json 切回；可用 JSON 配置或 CLI 覆盖
     input_dirs: dict = field(default_factory=lambda: {
-        "pdf_download": "data/文本pdf",
-        "pdf_download_cn": "data/文本pdf中文版",
-        "pdf_photo": "data/版式pdf",
-        "pdf_photo_cn": "data/版式pdf中文版",
-        "word": "data/word",
-        "html_source": "data/源码html",
-        "screenshot": "data/截图html",
-        "txt": "data/txt",
+        "pdf_download": "data/爬取语料_v3/文本pdf英文版",
+        "pdf_download_cn": "data/爬取语料_v3/文本pdf中文版",
+        "pdf_photo": "data/爬取语料_v3/版式pdf英文版",
+        "pdf_photo_cn": "data/爬取语料_v3/版式pdf中文版",
+        "word": "data/爬取语料_v3/word",
+        "html_source": "data/爬取语料_v3/源码html",
+        "screenshot": "data/爬取语料_v3/截图html",
+        "txt": "data/爬取语料_v3/txt",
     })
     files: Optional[list] = None
     output_dir: str = "datasets"

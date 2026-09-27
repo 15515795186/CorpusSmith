@@ -5,7 +5,7 @@
   "scoring": {
     "model": "qwen-plus",
     "dimensions": "5 维各 1~5 分, 总分 25",
-    "pass_rule": "每维 ≥3 且总分 ≥18 (run_config_full.json 覆盖默认 20)"
+    "pass_rule": "每维 ≥3 且总分 ≥18 (v3 轮配置覆盖默认 20)"
   },
   "admission_rule": "仅收录【总分 ≥ 本轮配置阈值(18) 且唯一低于 3 的维度是内容完整性】的样本 —— 其余样本即使豁免结尾判据仍不达标, 不构成改判据的理由。",
   "sources": [

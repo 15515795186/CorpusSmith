@@ -35,7 +35,7 @@ TEXT_FIELDS = ("text", "output", "instruction")
 
 
 def resolve_data_file(dataset: str) -> str:
-    """新布局 datasets/<name>/data.jsonl；兼容旧的扁平 datasets/<name>.jsonl"""
+    """布局 <output_dir>/<name>/data.jsonl；兼容旧的扁平 <output_dir>/<name>.jsonl"""
     nested = os.path.join("datasets", dataset, "data.jsonl")
     flat = os.path.join("datasets", f"{dataset}.jsonl")
     for path in (nested, flat):

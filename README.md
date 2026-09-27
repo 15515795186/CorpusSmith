@@ -39,7 +39,10 @@ LLM_Data_Test/
 │   ├── llm/                         # 可选：dashscope 生成器（README）
 │   └── utils/                       # lang_detect / dedup / stats / cache（README）
 ├── data/                            # 原始数据 + 数据构建工具链（详见 data/README.md）
-│   ├── 文本pdf/                     50 篇英文论文 PDF（文字层）
+│   ├── 爬取语料_v3/                 ★ 项目最终输入：8 类 × 3 = 24 份（见下方说明）
+│   ├── 爬取语料_v2/                 第二版（40 份，备用/测试）
+│   ├── 爬取语料/                    初版（80 份，测试用例）
+│   ├── 文本pdf/                     50 篇英文论文 PDF（文字层，初版测试语料）
 │   ├── 文本pdf中文版/                50 篇中文论文 PDF（文字层）
 │   ├── 版式pdf/                     50 篇英文扫描版 PDF（需 OCR）
 │   ├── 版式pdf中文版/                50 篇中文扫描版 PDF（需 OCR）
@@ -373,7 +376,7 @@ metadata 累计来源口径）、**样本字段契约**（开卷样本必带材�
 |------|------|
 | 明文 API key（`run_quality_score.py`） | 移除，改为环境变量/`--api-key`；该脚本默认不再覆盖原文件（`--in-place` 才覆盖且自动备份） |
 | 追加写导致跨次运行重复样本 | `JSONLFormatter` 每次运行重建；新增 `--resume` 续跑语义；旧输出归档到 `_legacy_flat/` |
-| README 与实际目录/路径不一致 | 输出改为 `datasets/<type>/data.jsonl`（与文档一致），README 全量重写 |
+| README 与实际目录/路径不一致 | 输出改为 `<output_dir>/<type>/data.jsonl`（与文档一致），README 全量重写 |
 | 高频汉字被误判乱码 | `_is_garbage` 改为连续重复 + 单字符占比；实测真实白皮书由"丢弃"变为"通过" |
 | 60KB+ 论文因长度整篇丢弃 | 默认 `max_text_length` 提升到 1000000，长文交给分块 |
 | NFKC 破坏中文标点、列表/步骤被合并 | 改用 NFC；结构化行保留换行（实测 COT 样本 6 → 12） |

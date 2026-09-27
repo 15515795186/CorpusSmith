@@ -40,7 +40,7 @@
 
 一个计数字段集合（文件数/类型分布/成败/缓存命中/过滤数/样本数/语言分布/token 合计/
 错误尾巴），`print_summary()` 输出控制台报告；机器可读版本由
-`pipeline._write_run_report()` 写 `datasets/run_report.json`。
+`pipeline._write_run_report()` 写 `<output_dir>/run_report.json`。
 
 ## 依赖
 

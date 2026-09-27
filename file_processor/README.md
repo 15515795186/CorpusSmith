@@ -57,7 +57,7 @@ FileProcessorPipeline.run()
                             不过 → rejected(stage=quality)（API 错误也记此阶段，resume 会重试）
   6  _convert_and_output()  三种转换器逐文档产出 → JSONLFormatter 指纹去重写入
                             写 metadata.json（sources 累计 + sources_this_run）
-  7  _write_run_report()    datasets/run_report.json（to_dict(redact=True) 脱敏配置）
+  7  _write_run_report()    <output_dir>/run_report.json（to_dict(redact=True) 脱敏配置）
 ```
 
 ## 根目录文件说明
