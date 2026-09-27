@@ -20,6 +20,9 @@ output/
 demo_out*/
 *.log
 
+# ---- 本地留档(分析笔记, 不入库) ----
+docs/
+
 # ---- 测试 ----
 .test_tmp/
 test_out.txt
