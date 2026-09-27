@@ -92,6 +92,17 @@ class InstructionConverter:
     MATERIAL_MAX = 1200
     OUTPUT_MAX = 1000
 
+    # 每份来源的产条上限: 由体量决定(每 ~1500 字 1 条), 夹在 [3, 40]
+    # 口径: 有多少字就分析多少字, 能生成多少就生成多少 —— 不再固定"只吃前 5 块"
+    _SFT_CHARS_PER_SAMPLE = 1500
+    _SFT_MIN_PER_SOURCE = 3
+    _SFT_MAX_PER_SOURCE = 40
+
+    def _source_budget(self, text: str) -> int:
+        """每份来源的目标条数(按体量), 夹在 [_SFT_MIN_PER_SOURCE, _SFT_MAX_PER_SOURCE]"""
+        n = int(round(len(text or "") / float(self._SFT_CHARS_PER_SAMPLE)))
+        return max(self._SFT_MIN_PER_SOURCE, min(self._SFT_MAX_PER_SOURCE, n))
+
     def _generate_from_templates(self, text: str, result: ReaderResult) -> List[Dict]:
         """从文本结构中用模板生成指令对
 
@@ -326,9 +337,13 @@ class InstructionConverter:
         source = os.path.basename(result.filepath)
         language = detect_language(text)
 
-        # 按长度切块，每块生成指令
+        # 按长度切块, 逐块生成指令 —— 块数按**体量**, 不再固定只处理前 5 块
         chunks = self._split_into_chunks(text, 1500)
-        for chunk in chunks[:5]:  # 最多处理5块
+        budget = self._source_budget(text)
+        for chunk in chunks:
+            if len(samples) >= budget:
+                logger.info("SFT 该来源条数达上限 %d(按体量), 停止后续分块", budget)
+                break
             # 拒绝采样(失败重试制): 该块一次生成产出 0 条有效样本才重试
             # (上限 llm_max_attempts); 有 1 条即停 → 多数场景零额外成本
             chunk_samples: List[Dict] = []

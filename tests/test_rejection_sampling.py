@@ -175,3 +175,34 @@ class TestCOTExtractiveSeed(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestInstructionVolumeBudget(unittest.TestCase):
+    """按体量生成: 不再固定只处理前 5 块(块数/条数由体量决定)"""
+
+    GOOD = ('[{"instruction": "材料中反复出现的句子说明了什么?",'
+            ' "input": "", "output": "该句用于说明材料的分块构成。"}]')
+
+    def test_source_budget_by_volume(self):
+        ic = InstructionConverter()
+        self.assertEqual(ic._source_budget("字" * 1500), 3)        # 体量小 → 下限 3
+        self.assertEqual(ic._source_budget("字" * 15000), 10)      # 15000/1500
+        self.assertEqual(ic._source_budget("字" * 300000), 40)     # 封顶 40
+
+    def test_all_chunks_processed_not_just_five(self):
+        # 16800 字 ≈ 11 块: 旧逻辑只处理前 5 块(最多 5 次调用), 新逻辑按体量处理全部
+        text = "这是用于分块测试的句子，内容长度足够构成材料。" * 800
+        gen = FakeGenerator([self.GOOD])
+        ic = InstructionConverter(llm_generator=gen, llm_max_attempts=3)
+        samples = ic._generate_with_llm(text, make_result(text))
+        self.assertGreater(gen.call_count, 5)                      # 5 块上限已取消
+        self.assertGreater(len(samples), 5)                        # 产出也随体量增加
+        self.assertLessEqual(len(samples), 40)                     # 仍受上限约束
+
+    def test_stops_at_budget(self):
+        # 体量远大于上限: 产出不应超过 40 条(不无限膨胀)
+        text = "这是用于分块测试的句子，内容长度足够构成材料。" * 4000
+        gen = FakeGenerator([self.GOOD])
+        ic = InstructionConverter(llm_generator=gen, llm_max_attempts=3)
+        samples = ic._generate_with_llm(text, make_result(text))
+        self.assertLessEqual(len(samples), 40)
