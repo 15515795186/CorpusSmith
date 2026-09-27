@@ -29,9 +29,9 @@ LLM_Data_Test/
 │   ├── pipeline.py                  # 管道编排：扫描→读取→清洗→质检→转换→输出
 │   ├── config.py                    # 全局配置（dataclass + JSON 覆盖）
 │   ├── dotenv.py                    # 零依赖 .env 加载器（真实环境变量优先）
-│   ├── quality_scorer.py            # qwen-plus 多维度质量评分（并发）
-│   ├── run_config.json              # 运行配置：可提取文本的 250 个文件
-│   ├── run_config_ocr.json          # 运行配置：需 OCR 的 150 个文件
+│   ├── quality_scorer.py            # deepseek-flash 多维度质量评分（并发）
+│   ├── run_config_v3.json           # 运行配置：全流程（最终语料 v3 的 24 份 → 三份产出）
+│   ├── run_config_cot_sft.json      # 运行配置：只跑 COT（以既有 SFT 问答对为素材）
 │   ├── readers/                     # pdf / word / html / txt / qwen-vl ocr（各有 README）
 │   ├── cleaners/                    # text_cleaner / html_cleaner / quality_filter（README）
 │   ├── converters/                  # pretrain / instruction / cot（README：含 input 契约）
@@ -93,36 +93,48 @@ pip install -r requirements.txt
 # 2. 配置 API key（三选一，不要写进代码）
 #    a. 推荐：项目根放 .env（已被 gitignore），运行时自动加载
 #       PowerShell: Copy-Item .env.example .env  然后填入 key
+#       需要两个: DEEPSEEK_API_KEY(文本链: SFT/COT 生成、质量评分、语义抽检)
+#                 DASHSCOPE_API_KEY(仅 OCR 视觉链 qwen-vl-plus; 可留空, 走读取缓存即可)
 #    b. 临时：当前窗口设置，进程退出即消失
-export DASHSCOPE_API_KEY="sk-xxx"          # Linux/macOS
-$env:DASHSCOPE_API_KEY="sk-xxx"            # Windows PowerShell
+export DEEPSEEK_API_KEY="sk-xxx"           # Linux/macOS
+$env:DEEPSEEK_API_KEY="sk-xxx"             # Windows PowerShell
 #    c. 不推荐：写入用户环境变量（明文长期存注册表，所有子进程可见）
-setx DASHSCOPE_API_KEY "sk-xxx"            # 优先级：真实环境变量 > .env 文件
+setx DEEPSEEK_API_KEY "sk-xxx"             # 优先级：真实环境变量 > .env 文件
 
 # 3. 先看配置与待处理文件（不写任何文件）
 python -m file_processor.main --dry-run
 
-# 4. 处理 250 个可提取文本的文件
-python -m file_processor.main --config file_processor/run_config.json
+# 4. 生产入口: 全流程（项目最终语料 8 类 × 3 = 24 份 → pretrain / instruction / cot）
+python -m file_processor.main --config file_processor/run_config_v3.json
 
-# 5. 处理 150 个需要 OCR 的文件（耗时较长，建议后台运行）
-python -m file_processor.main --config file_processor/run_config_ocr.json
+# 5. 只跑 COT（以既有 SFT 问答对为素材: 判类 → 回原文搜据 → 写规范字段）
+python -m file_processor.main --config file_processor/run_config_cot_sft.json
 
-# 6. 中断后接着跑（已处理来源在读/评/写之前就跳过；质检被限流淘汰的会自动重试）
-python -m file_processor.main --config file_processor/run_config_ocr.json --resume
+# 6. 清空重建（配置里 resume=true 时用它显式覆盖; 不加则按配置走续跑/重建）
+python -m file_processor.main --config file_processor/run_config_v3.json --rebuild
 
-# 7. 查看进度
+# 7. 中断后接着跑（已处理来源在读/评/写之前就跳过; 质检被限流淘汰的会自动重试）
+python -m file_processor.main --config file_processor/run_config_v3.json --resume
+
+# 8. 查看进度
 python check_progress.py
 ```
 
-不指定 `--config` 时使用 `config.py` 中的默认路径，即 `data/` 下的 8 个目录（共 400 个文件）。
+**入口与输出目录**
+
+- 不带 `--config` 走 `config.py` 默认值：输入 = **项目最终语料** `data/爬取语料_v3`（8 类 × 3 = 24 份），
+  输出 = **沙盒目录** `datasets/` —— 只做演练，**不会碰 `datasets_v3_20260927/` 里的最终产出**。
+- 最终产出（pretrain 237 / instruction 165 / cot 51）只由 `run_config_v3.json` 写入；
+  只想重跑 COT 用 `run_config_cot_sft.json`。
+- 初版 400 份与 v2 语料已删除（曾是测试用例），`run_config.json` / `run_config_v2.json` /
+  `run_config_ocr.json` 随之移除。
 
 ---
 
 ## 数据处理流程
 
 ```
-400 个原始文件
+原始语料文件（最终语料 v3: 24 份）
       │
       ▼
 ┌─────────────────────────── 读取（带磁盘缓存）───────────────────────────┐
@@ -134,7 +146,7 @@ python check_progress.py
                                    ▼
                      启发式质量过滤（长度 / 信息密度 / 乱码 / 空表单熔断 / SimHash 去重）
                                    ▼
-                     LLM 质量评分（qwen-plus，并发，单项≥3 且总分≥18：阈值为运营参数，代码默认 20、
+                     LLM 质量评分（deepseek-flash，并发，单项≥3 且总分≥18：阈值为运营参数，代码默认 20、
                       run_config 实测调至 18，依据见「实测规模」一节）
                                    ▼
         ┌──────────────────────────┼──────────────────────────┐
@@ -237,7 +249,7 @@ datasets_v3_20260927/          # 实际目录名由 output_dir 决定（本轮 =
 
 ## 质量评分
 
-清洗后的文本逐条交给 `qwen-plus` 打分（并发执行，`--max-workers` 控制并发数）：
+清洗后的文本逐条交给 `deepseek-flash` 打分（并发执行，`--max-workers` 控制并发数）：
 
 | 维度 | 范围 | 说明 |
 |------|------|------|
