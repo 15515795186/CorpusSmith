@@ -14,6 +14,17 @@ logger = logging.getLogger(__name__)
 
 COMPATIBLE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
+#: 各 provider 的 OpenAI 兼容端点
+PROVIDER_BASE_URLS = {
+    "dashscope": COMPATIBLE_BASE_URL,
+    "deepseek": "https://api.deepseek.com/",
+}
+#: 各 provider 的密钥环境变量名
+PROVIDER_ENV_KEYS = {
+    "dashscope": "DASHSCOPE_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+}
+
 
 class DashScopeGenerator(BaseLLMGenerator):
     """阿里云 DashScope（通义千问/百炼）调用，OpenAI 兼容模式
@@ -27,13 +38,19 @@ class DashScopeGenerator(BaseLLMGenerator):
                  model: str = "qwen3.5-plus",
                  temperature: float = 0.3,
                  max_tokens: int = 2048,
-                 max_retries: int = 3):
-        self.api_key = api_key or os.getenv("DASHSCOPE_API_KEY", "")
+                 max_retries: int = 3,
+                 provider: str = "dashscope",
+                 base_url: str = ""):
+        self.provider = provider if provider in PROVIDER_BASE_URLS else "dashscope"
+        env_key = PROVIDER_ENV_KEYS.get(self.provider, "DASHSCOPE_API_KEY")
+        self.api_key = api_key or os.getenv(env_key, "")
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.max_retries = max_retries
-        self.base_url = os.getenv("DASHSCOPE_BASE_URL", COMPATIBLE_BASE_URL)
+        # 端点优先级: 显式 base_url > provider 专属环境变量 > 内置表
+        env_base = os.getenv(self.provider.upper() + "_BASE_URL", "")
+        self.base_url = base_url or env_base or PROVIDER_BASE_URLS[self.provider]
 
     def _request_kwargs(self, messages) -> dict:
         kwargs = {
@@ -67,7 +84,7 @@ class DashScopeGenerator(BaseLLMGenerator):
                 )
                 return response.choices[0].message.content or ""
             except Exception as e:
-                logger.warning("DashScope API attempt %d/%d failed: %s",
+                logger.warning("%s API attempt %d/%d failed: %s", self.provider,
                                attempt + 1, self.max_retries, e)
                 if attempt < self.max_retries - 1:
                     time.sleep(2 ** attempt)
@@ -93,9 +110,13 @@ class DashScopeGenerator(BaseLLMGenerator):
                 )
                 return response.choices[0].message.content or ""
             except Exception as e:
-                logger.warning("DashScope async API attempt %d/%d failed: %s",
+                logger.warning("%s async API attempt %d/%d failed: %s", self.provider,
                                attempt + 1, self.max_retries, e)
                 if attempt < self.max_retries - 1:
                     await asyncio.sleep(2 ** attempt)
                 else:
                     raise
+
+
+#: 语义化别名 —— 本类实为 "OpenAI 兼容端点" 通用实现(DeepSeek / DashScope 通用)
+OpenAICompatGenerator = DashScopeGenerator

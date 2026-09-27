@@ -112,8 +112,8 @@ def parse_args():
 
     # LLM 生成
     parser.add_argument("--llm", action="store_true", help="启用LLM生成指令/COT")
-    parser.add_argument("--llm-provider", default=None, choices=["dashscope"],
-                        help="LLM供应商 (default: dashscope)")
+    parser.add_argument("--llm-provider", default=None, choices=["dashscope", "deepseek"],
+                        help="LLM供应商 (default: deepseek)")
     parser.add_argument("--llm-model", default=None, help="LLM模型名 (覆盖默认)")
 
     # 质量评分
@@ -210,7 +210,10 @@ def build_config(args) -> ProcessorConfig:
     if args.llm_provider:
         config.llm_provider = args.llm_provider
     if args.llm_model:
-        config.dashscope_model = args.llm_model
+        if config.llm_provider == "deepseek":
+            config.deepseek_model = args.llm_model
+        else:
+            config.dashscope_model = args.llm_model
 
     # ---- 质量评分 ----
     if args.no_quality:
@@ -235,6 +238,8 @@ def build_config(args) -> ProcessorConfig:
     load_dotenv()
     if not config.dashscope_api_key:
         config.dashscope_api_key = os.getenv("DASHSCOPE_API_KEY", "")
+    if not config.deepseek_api_key:
+        config.deepseek_api_key = os.getenv("DEEPSEEK_API_KEY", "")
 
     return config
 
@@ -254,7 +259,8 @@ def print_config_summary(config: ProcessorConfig):
     print(f"  读取缓存: {'ON' if config.use_read_cache else 'OFF'}")
     print(f"  质量评分: {'ON' if (config.quality_enabled and config.api_key()) else 'OFF'} "
           f"(阈值 单项≥{config.quality_min_per_dimension}, 总分≥{config.quality_min_total})")
-    print(f"  LLM生成: {'ON (' + config.llm_provider + ')' if config.enable_llm else 'OFF (template only)'}")
+    print(f"  LLM生成: {'ON (' + config.llm_provider + ' -> ' + config.llm_model() + ')' if config.enable_llm else 'OFF (template only)'}")
+    print(f"  OCR(视觉): {'ON (dashscope ' + config.ocr_model + ')' if config.ocr_api_key() else 'OFF (无 DASHSCOPE_API_KEY)'}")
     print(f"  并发数: {config.max_workers}")
     print(f"  最小/最大文本长度: {config.min_text_length} / {config.max_text_length}")
     print(f"  分块: {config.chunk_size} (overlap {config.chunk_overlap})")

@@ -29,7 +29,7 @@
   "sample_check_ratio": 0.1,
   "review_output": "datasets_v3_20260927/review_output.jsonl",
   "quality_enabled": true,
-  "quality_model": "qwen-plus",
+  "quality_model": "",
   "quality_min_per_dimension": 3,
   "quality_min_total": 18,
   "enable_ppl_filter": true,
@@ -51,5 +51,8 @@
     "zh",
     "en"
   ],
-  "keep_unknown_language": true
+  "keep_unknown_language": true,
+  "llm_provider": "deepseek",
+  "deepseek_base_url": "https://api.deepseek.com/",
+  "deepseek_model": "DeepSeek-V4.1-Flash"
 }

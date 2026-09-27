@@ -86,8 +86,15 @@ class QualityScorer:
     def __init__(self, api_key: str = "", model: str = "qwen-plus",
                  min_per_dimension: int = 3, min_total: int = 20,
                  batch_size: int = 5, max_retries: int = 4,
-                 max_workers: int = 4):
-        self.api_key = api_key or os.getenv("DASHSCOPE_API_KEY", "")
+                 max_workers: int = 4,
+                 provider: str = "dashscope", base_url: str = ""):
+        # 与文本生成同一套 provider 解析: DeepSeek 走 https://api.deepseek.com/
+        env_key = "DEEPSEEK_API_KEY" if provider == "deepseek" else "DASHSCOPE_API_KEY"
+        default_base = ("https://api.deepseek.com/" if provider == "deepseek"
+                        else "https://dashscope.aliyuncs.com/compatible-mode/v1")
+        self.api_key = api_key or os.getenv(env_key, "")
+        self.provider = provider
+        self.base_url = base_url or default_base
         self.model = model
         self.min_per_dimension = min_per_dimension
         self.min_total = min_total
@@ -120,18 +127,18 @@ class QualityScorer:
             )
 
         try:
-            import dashscope
-            from dashscope import Generation
+            from openai import OpenAI
         except ImportError as e:
-            return QualityScore(passed=False, error=f"dashscope 未安装: {e}")
+            return QualityScore(passed=False, error=f"openai 未安装: {e}")
 
-        dashscope.api_key = self.api_key
+        client = OpenAI(api_key=self.api_key, base_url=self.base_url,
+                        timeout=120, max_retries=0)
         sample = self._build_sample(text)
         last_err = ""
 
         for attempt in range(self.max_retries):
             try:
-                response = Generation.call(
+                response = client.chat.completions.create(
                     model=self.model,
                     messages=[
                         {"role": "system", "content": QUALITY_PROMPT},
@@ -139,18 +146,8 @@ class QualityScorer:
                     ],
                     temperature=0.1,
                     max_tokens=512,
-                    result_format="message",
                 )
-                if response.status_code != 200:
-                    last_err = f"HTTP {response.status_code}: {str(response.message)[:140]}"
-                    logger.warning("Quality scoring API attempt %d/%d failed: %s",
-                                   attempt + 1, self.max_retries, last_err)
-                    if attempt < self.max_retries - 1:
-                        time.sleep(2 ** attempt)
-                        continue
-                    return QualityScore(passed=False, error=last_err)
-
-                content = response.output.choices[0].message.content
+                content = response.choices[0].message.content
                 result = self._parse_response(content)
                 if result:
                     return result

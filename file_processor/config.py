@@ -51,10 +51,15 @@ class ProcessorConfig:
 
     # ========== LLM 生成（可选）==========
     enable_llm: bool = False
-    llm_provider: str = "dashscope"
+    # 文本 LLM: 默认走 DeepSeek 官方 OpenAI 兼容端点(百炼欠费后的主通道)
+    llm_provider: str = "deepseek"          # deepseek | dashscope
+    deepseek_api_key: str = ""
+    deepseek_base_url: str = "https://api.deepseek.com/"
+    deepseek_model: str = "DeepSeek-V4.1-Flash"
+    # DashScope: 文本生成已切 DeepSeek, 此处仅保留给 OCR 视觉链(qwen-vl-plus)
     dashscope_api_key: str = ""
-    dashscope_model: str = "qwen3.5-plus"  # 百炼生成默认模型(qwen-max 需单独开通权限, plus 实测可用); 推理链可用 deepseek-r1
-    llm_cot_model: str = ""                # COT 转换器专用模型; 留空则与主模型共用。例如 "deepseek-r1"(推理链强)
+    dashscope_model: str = "qwen3.5-plus"  # 仅当 llm_provider="dashscope" 时用于文本生成
+    llm_cot_model: str = ""                # COT 转换器专用模型; 留空则与主模型共用
     llm_cot_max_tokens: int = 0            # COT 专用输出上限; 0 = 跟随 llm_max_tokens(deepseek-r1 思考链偏长, 建议 3000-4000)
     llm_max_attempts: int = 3              # 拒绝采样(失败重试制): LLM 生成后硬校验不过则重试的上限; 1=不重试
     llm_batch_size: int = 5
@@ -71,7 +76,7 @@ class ProcessorConfig:
 
     # ========== LLM 质量评分 ==========
     quality_enabled: bool = True
-    quality_model: str = "qwen-plus"
+    quality_model: str = ""                # 留空 = 跟随当前 provider 的主模型
     quality_min_per_dimension: int = 3
     quality_min_total: int = 20
     # 人工豁免名单: 质检淘汰、但经人工复核判定应保留的来源(典型: "结尾自然收束"
@@ -147,6 +152,36 @@ class ProcessorConfig:
         return {k: v for k, v in self.input_dirs.items()
                 if v and os.path.isdir(v)}
 
+    # ---------- 供应商解析: 文本 LLM 与 OCR(视觉) 各一套 key ----------
+    def llm_model(self) -> str:
+        """当前 provider 的文本生成模型名"""
+        if self.llm_provider == "deepseek":
+            return self.deepseek_model or "DeepSeek-V4.1-Flash"
+        return self.dashscope_model
+
+    def llm_base_url(self) -> str:
+        """当前 provider 的 OpenAI 兼容端点"""
+        if self.llm_provider == "deepseek":
+            return self.deepseek_base_url or "https://api.deepseek.com/"
+        return os.getenv("DASHSCOPE_BASE_URL",
+                         "https://dashscope.aliyuncs.com/compatible-mode/v1")
+
     def api_key(self) -> str:
-        """返回可用的 DashScope API key（配置优先，其次环境变量）"""
+        """当前文本 LLM provider 的 key（配置优先，其次环境变量）"""
+        if self.llm_provider == "deepseek":
+            return self.deepseek_api_key or os.getenv("DEEPSEEK_API_KEY", "")
         return self.dashscope_api_key or os.getenv("DASHSCOPE_API_KEY", "")
+
+    def ocr_api_key(self) -> str:
+        """OCR(视觉链 qwen-vl)专用 key —— 与文本 LLM 的 provider 无关"""
+        return self.dashscope_api_key or os.getenv("DASHSCOPE_API_KEY", "")
+
+    def cot_model(self) -> str:
+        """COT 专用模型(llm_cot_model 留空则跟随主模型)"""
+        return self.llm_cot_model or self.llm_model()
+
+    def quality_model_resolved(self) -> str:
+        """质量评分模型: 配置留空时跟随 provider 主模型"""
+        if self.quality_model:
+            return self.quality_model
+        return "qwen-plus" if self.llm_provider == "dashscope" else self.llm_model()

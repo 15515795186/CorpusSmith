@@ -7,7 +7,11 @@
   "files": null,
   "output_dir": "datasets",
   "output_prefix": "",
-  "output_types": ["pretrain", "instruction", "cot"],
+  "output_types": [
+    "pretrain",
+    "instruction",
+    "cot"
+  ],
   "min_text_length": 30,
   "max_text_length": 1000000,
   "chunk_size": 1024,
@@ -19,7 +23,7 @@
   "ocr_dpi": 300,
   "ocr_max_retries": 3,
   "quality_enabled": true,
-  "quality_model": "qwen-plus",
+  "quality_model": "",
   "quality_min_per_dimension": 3,
   "quality_min_total": 18,
   "resume": false,

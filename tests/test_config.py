@@ -86,26 +86,63 @@ class ConfigTest(unittest.TestCase):
     def test_to_dict_redacts_api_keys(self):
         config = ProcessorConfig()
         config.dashscope_api_key = "sk-secret"
+        config.deepseek_api_key = "sk-ds-secret"
         redacted = config.to_dict(redact=True)
         self.assertEqual(redacted["dashscope_api_key"], "***redacted***")
+        self.assertEqual(redacted["deepseek_api_key"], "***redacted***")
         # 不 redact 时保留原值（供存储使用）
         self.assertEqual(config.to_dict()["dashscope_api_key"], "sk-secret")
 
     def test_api_key_prefers_config_over_env(self):
+        """文本 LLM key 按 provider 解析: 默认 deepseek, 也可切回 dashscope"""
         config = ProcessorConfig()
-        config.dashscope_api_key = "from-config"
+        self.assertEqual(config.llm_provider, "deepseek")
+        config.deepseek_api_key = "from-config"
         self.assertEqual(config.api_key(), "from-config")
 
-        old = os.environ.get("DASHSCOPE_API_KEY")
-        os.environ["DASHSCOPE_API_KEY"] = "from-env"
+        old = os.environ.get("DEEPSEEK_API_KEY")
+        os.environ["DEEPSEEK_API_KEY"] = "from-env"
         try:
             empty = ProcessorConfig()
             self.assertEqual(empty.api_key(), "from-env")
         finally:
             if old is None:
+                os.environ.pop("DEEPSEEK_API_KEY", None)
+            else:
+                os.environ["DEEPSEEK_API_KEY"] = old
+
+        ds = ProcessorConfig(llm_provider="dashscope")
+        ds.dashscope_api_key = "ds-config"
+        self.assertEqual(ds.api_key(), "ds-config")
+
+    def test_provider_resolution_and_ocr_key_separation(self):
+        """模型/端点按 provider 解析; OCR(视觉) key 与文本 key 分离"""
+        c = ProcessorConfig()
+        self.assertEqual(c.llm_model(), "DeepSeek-V4.1-Flash")
+        self.assertEqual(c.llm_base_url(), "https://api.deepseek.com/")
+        self.assertEqual(c.quality_model_resolved(), "DeepSeek-V4.1-Flash")
+        self.assertEqual(c.cot_model(), "DeepSeek-V4.1-Flash")
+
+        old = os.environ.get("DASHSCOPE_API_KEY")
+        old_ds = os.environ.get("DEEPSEEK_API_KEY")
+        os.environ["DASHSCOPE_API_KEY"] = "ocr-only"
+        os.environ.pop("DEEPSEEK_API_KEY", None)
+        try:
+            self.assertEqual(c.ocr_api_key(), "ocr-only")
+            # 只有 OCR key 时, 文本 LLM 视为未配置(不误开质量评分)
+            self.assertEqual(ProcessorConfig().api_key(), "")
+        finally:
+            if old is None:
                 os.environ.pop("DASHSCOPE_API_KEY", None)
             else:
                 os.environ["DASHSCOPE_API_KEY"] = old
+            if old_ds is not None:
+                os.environ["DEEPSEEK_API_KEY"] = old_ds
+
+        d = ProcessorConfig(llm_provider="dashscope", llm_cot_model="qwen3.5-max")
+        self.assertEqual(d.llm_model(), "qwen3.5-plus")
+        self.assertEqual(d.cot_model(), "qwen3.5-max")
+        self.assertTrue(d.llm_base_url().startswith("https://dashscope.aliyuncs.com/"))
 
     def test_repo_run_configs_are_valid(self):
         base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

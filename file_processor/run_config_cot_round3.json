@@ -29,7 +29,7 @@
   "sample_check_ratio": 0.1,
   "review_output": "datasets_full_20260926/review_output.jsonl",
   "quality_enabled": true,
-  "quality_model": "qwen-plus",
+  "quality_model": "",
   "quality_min_per_dimension": 3,
   "quality_min_total": 18,
   "enable_ppl_filter": true,

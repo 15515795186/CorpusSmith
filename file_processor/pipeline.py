@@ -79,7 +79,7 @@ class FileProcessorPipeline:
 
         # Qwen-VL OCR 读取器（截图 + 扫描PDF）
         self.qwen_ocr = QwenVLOcrReader(
-            api_key=config.api_key(),
+            api_key=config.ocr_api_key(),
             model=config.ocr_model,
             max_retries=config.ocr_max_retries,
         )
@@ -88,7 +88,7 @@ class FileProcessorPipeline:
         self.readers = [
             PDFReader(
                 min_text_chars=config.ocr_min_text_chars,
-                qwen_ocr=self.qwen_ocr if config.api_key() else None,
+                qwen_ocr=self.qwen_ocr if config.ocr_api_key() else None,
                 ocr_dpi=config.ocr_dpi,
                 work_dir=config.ocr_work_dir,
             ),
@@ -168,52 +168,49 @@ class FileProcessorPipeline:
         if config.quality_enabled and config.api_key():
             self.quality_scorer = QualityScorer(
                 api_key=config.api_key(),
-                model=config.quality_model,
+                model=config.quality_model_resolved(),
                 min_per_dimension=config.quality_min_per_dimension,
                 min_total=config.quality_min_total,
                 max_workers=config.max_workers,
+                provider=config.llm_provider,
+                base_url=config.llm_base_url(),
             )
-            logger.info("质量评分已启用 (%s, 阈值: 单项≥%d, 总分≥%d)",
-                        config.quality_model, config.quality_min_per_dimension,
-                        config.quality_min_total)
+            logger.info("质量评分已启用 (%s/%s, 阈值: 单项≥%d, 总分≥%d)",
+                        config.llm_provider, config.quality_model_resolved(),
+                        config.quality_min_per_dimension, config.quality_min_total)
         elif config.quality_enabled:
-            logger.warning("未找到 DashScope API key，质量评分已跳过")
+            logger.warning("未找到 %s API key，质量评分已跳过", config.llm_provider)
 
     def _init_llm_generator(self):
-        """初始化LLM生成器"""
+        """初始化LLM生成器(按 llm_provider 选端点: deepseek 默认)"""
         if not self.config.enable_llm:
             return None
-        if self.config.llm_provider == "openai":
-            raise ValueError("llm_provider 'openai' 已移除, 仅支持 'dashscope'")
+        return self._build_generator(self.config.llm_model(),
+                                     self.config.llm_max_tokens)
 
-        if self.config.llm_provider == "dashscope":
-            from .llm.dashscope_generator import DashScopeGenerator
-            return DashScopeGenerator(
-                api_key=self.config.api_key(),
-                model=self.config.dashscope_model,
-                temperature=self.config.llm_temperature,
-                max_tokens=self.config.llm_max_tokens,
-            )
-        logger.warning("Unknown LLM provider: %s", self.config.llm_provider)
-        return None
+    def _build_generator(self, model: str, max_tokens: int):
+        """按当前 provider 构造生成器(DeepSeek / DashScope 共用同一实现)"""
+        provider = self.config.llm_provider
+        if provider not in ("dashscope", "deepseek"):
+            raise ValueError("llm_provider 只支持 dashscope / deepseek, 收到: %s" % provider)
+        from .llm.dashscope_generator import DashScopeGenerator
+        return DashScopeGenerator(
+            api_key=self.config.api_key(),
+            model=model,
+            temperature=self.config.llm_temperature,
+            max_tokens=max_tokens,
+            provider=provider,
+            base_url=self.config.llm_base_url(),
+        )
 
     def _init_cot_llm_generator(self, base_generator):
         """COT 转换器专用生成器：llm_cot_model 指定时用该模型实例，否则与 instruction 共用 base_generator"""
         if not self.config.enable_llm or not self.config.llm_cot_model:
             return base_generator
-        if self.config.llm_provider == "openai":
-            raise ValueError("llm_provider 'openai' 已移除, 仅支持 'dashscope'")
-
-        if self.config.llm_provider == "dashscope":
-            from .llm.dashscope_generator import DashScopeGenerator
-            return DashScopeGenerator(
-                api_key=self.config.api_key(),
-                model=self.config.llm_cot_model,
-                temperature=self.config.llm_temperature,
-                max_tokens=self.config.llm_cot_max_tokens or self.config.llm_max_tokens,
-            )
-        logger.warning("Unknown LLM provider: %s", self.config.llm_provider)
-        return base_generator
+        return self._build_generator(
+            self.config.llm_cot_model,
+            self.config.llm_cot_max_tokens or self.config.llm_max_tokens,
+        )
 
     # ================= 主流程 =================
     def run(self):

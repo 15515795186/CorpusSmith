@@ -141,14 +141,17 @@ class COTConverter:
         r'\bhow many\b|^\s*(?:is|are|was|were)\b', re.IGNORECASE)
     # 显式类别标记(题面直接点明类别) —— 优先级最高
     _EXPLICIT = (
-        ("比较", re.compile(r'对比|比较|差异|优劣|异同|相比|compare|comparison|difference|versus|vs\.?',
+        ("比较", re.compile(r'对比|比较|差异|优劣|异同|相比|'
+                            r'\bcompare[ds]?\b|\bcomparison\b|\bdifferences?\b|\bversus\b|\bvs\.?',
                             re.IGNORECASE)),
-        ("建议", re.compile(r'建议|推荐|应当|应该|措施|如何改进|怎么改|对策|recommend|advice|should|measures',
+        ("建议", re.compile(r'建议|推荐|应当|应该|措施|如何改进|怎么改|对策|'
+                            r'\brecommend\w*\b|\badvice\b|\bshould\b|\bmeasures\b',
                             re.IGNORECASE)),
-        ("推理", re.compile(r'计算|求解|算出|求证|证明|推导|推算|算一算|calculate|compute|solve|derive|prove',
+        ("推理", re.compile(r'计算|求解|算出|求证|证明|推导|推算|算一算|'
+                            r'\bcalculate\b|\bcompute\b|\bsolve[ds]?\b|\bderive\b|\bprove\b',
                             re.IGNORECASE)),
         ("解释", re.compile(r'解释|说明(?:其)?(?:原因|原理|机制|过程)|为什么|原因(?:是|在于)|原理|机制|'
-                            r'explain|why|reason|mechanism|principle', re.IGNORECASE)),
+                            r'\bexplain\w*\b|\bwhy\b|\breason\w*\b|\bmechanism\b|\bprinciple\b', re.IGNORECASE)),
     )
     # 模板套话与来源文件名: 判类前剥离(防来源标签经文件名漏进判类)
     _TEMPLATE_PATS = (
@@ -325,13 +328,14 @@ class COTConverter:
         if language == "zh":
             return f"""请根据以下问答对，生成详细的推理过程(chain-of-thought)。
 
-原始文本的上下文（供参考）：\n{context[:1200]}
+原文上下文（与 input 同源，可引用；但两边都没有的内容一律禁止）：\n{context[:1200]}
 
 问答对：\n指令：{instruction}\n回答：{output}\n{class_line}\n{shot_line}\n{basis}
 纪律（必须遵守）：
 - 推理过程的每一步只能引用上方上下文/问答对中**明确出现**的内容；
 - 未在上方文本中出现的事实、数字、专名、条目一律禁止引入（禁止凭常识或训练记忆补充）；
-- 若信息不足，只基于已给信息推理，禁止外推。
+- 若信息不足，只基于已给信息推理，禁止外推；
+- 禁止把"问答对里的回答"本身当论据来回引用（循环论证），论据必须来自上方原文。
 请按以下格式输出（只输出推理过程本身，不要额外解释）：\n1. ...\n2. ...\n3. ...\n因此结论是：{output}"""
         else:
             return f"""Generate a detailed chain-of-thought reasoning process for the following Q&A pair.
@@ -414,9 +418,10 @@ Therefore, the answer is: {output}"""
     def _build_sample(self, record: Dict, task_type: str, source: str,
                       corpus_text: str, corpus_type: str) -> Optional[Dict]:
         """一条 SFT 样本 -> 一条 COT 样本(素材不得自造: instruction/input/output 原样沿用)"""
-        instruction = (record.get("instruction") or "").strip()
-        material = (record.get("input") or "").strip()
-        output = (record.get("output") or "").strip()
+        # 素材逐字沿用 SFT 原值(不 strip / 不 normalize) —— source.sft_id 可逐字回溯
+        instruction = record.get("instruction") or ""
+        material = record.get("input") or ""
+        output = record.get("output") or ""
         if not instruction or not output:
             return None
         language = detect_language(instruction + "\n" + output)
@@ -432,6 +437,7 @@ Therefore, the answer is: {output}"""
             "instruction": instruction,
             "input": material,
             "output": output,
+            "_context": context,        # 仅内部: 抽检核对用, 返回前 pop
             "chain_of_thought": chain,
             "task_type": task_type,
             # verifiable = 该条是否存在可唯一验证的答案
@@ -493,6 +499,8 @@ Therefore, the answer is: {output}"""
         if self.sample_check_ratio > 0 and samples:
             samples = self._semantic_sample_check(samples)
 
+        for _s in samples:
+            _s.pop("_context", None)          # 内部字段不得落盘
         self.stats["generated"] += len(samples)
         return samples
 
@@ -586,6 +594,8 @@ Therefore, the answer is: {output}"""
 
 注意：input 允许是材料节选——只要 input 内条目完整、且 output/链只引用
 input 中可见的内容，节选本身不构成不合格项（不要因"材料不完整"判 fail）。
+若样本带 context 字段, 它是**同一原文的更大窗口** —— 引用 context 中出现的内容
+不算幻觉; 但 input 与 context 都没有的内容仍判 fail。
 判 fail 必须给出具体证据（哪一步与材料不符/哪个数字无出处/哪处跳步），无证据一律 pass。
 说明: 基于材料逐条核对并计数(如"清点共几个条目")属于可接受的推理类形态
 (task_type=推理), 计数与材料的编号条目一一对应即合格, 不要以"仅是计数/信息提取"判 fail。
@@ -614,6 +624,7 @@ input 中可见的内容，节选本身不构成不合格项（不要因"材料�
                         "output": s.get("output") or "",
                         "chain_of_thought": s.get("chain_of_thought") or "",
                         "task_type": s.get("task_type", ""),
+                        "context": (s.get("_context") or "")[:2000],
                     }, ensure_ascii=False)),
                     system_prompt="你是训练数据质量审查员，严格把关，宁可剔除也不放过坏样本。")
                 m = re.search(r'"pass"\s*:\s*(true|false)', resp, re.IGNORECASE)
