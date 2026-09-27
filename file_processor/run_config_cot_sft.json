@@ -1,16 +1,16 @@
 {
   "input_dirs": {
-    "pdf_download": "data/爬取语料_v3/文本pdf英文版",
-    "pdf_download_cn": "data/爬取语料_v3/文本pdf中文版",
-    "pdf_photo": "data/爬取语料_v3/版式pdf英文版",
-    "pdf_photo_cn": "data/爬取语料_v3/版式pdf中文版",
-    "word": "data/爬取语料_v3/word",
-    "html_source": "data/爬取语料_v3/源码html",
-    "screenshot": "data/爬取语料_v3/截图html",
-    "txt": "data/爬取语料_v3/txt"
+    "pdf_download": "data/爬取语料/文本pdf英文版",
+    "pdf_download_cn": "data/爬取语料/文本pdf中文版",
+    "pdf_photo": "data/爬取语料/版式pdf英文版",
+    "pdf_photo_cn": "data/爬取语料/版式pdf中文版",
+    "word": "data/爬取语料/word",
+    "html_source": "data/爬取语料/源码html",
+    "screenshot": "data/爬取语料/截图html",
+    "txt": "data/爬取语料/txt"
   },
   "files": null,
-  "output_dir": "datasets_v3_20260927",
+  "output_dir": "datasets",
   "output_prefix": "",
   "output_types": [
     "cot"
@@ -23,7 +23,7 @@
   "llm_max_tokens": 4096,
   "cot_distribution_tolerance": 0.05,
   "sample_check_ratio": 0.1,
-  "review_output": "datasets_v3_20260927/review_output_cot.jsonl",
+  "review_output": "datasets/review_output_cot.jsonl",
   "quality_enabled": false,
   "quality_model": "",
   "quality_min_per_dimension": 3,

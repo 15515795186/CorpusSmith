@@ -19,14 +19,14 @@ from file_processor.converters.cot_converter import COTConverter
 from file_processor.formatters.jsonl_formatter import JSONLFormatter
 from file_processor.readers.base import ReaderResult
 
-A_DIRS = ["data/爬取语料_v3/文本pdf英文版", "data/爬取语料_v3/文本pdf中文版",
-          "data/爬取语料_v3/word", "data/爬取语料_v3/源码html", "data/爬取语料_v3/txt"]
-B_DIRS = ["data/爬取语料_v3/版式pdf英文版", "data/爬取语料_v3/版式pdf中文版",
-          "data/爬取语料_v3/截图html"]
+A_DIRS = ["data/爬取语料/文本pdf英文版", "data/爬取语料/文本pdf中文版",
+          "data/爬取语料/word", "data/爬取语料/源码html", "data/爬取语料/txt"]
+B_DIRS = ["data/爬取语料/版式pdf英文版", "data/爬取语料/版式pdf中文版",
+          "data/爬取语料/截图html"]
 
 # 通过质检的来源集合（来自 pretrain 记录的 meta.source）
 passed = set()
-with open("datasets_v3_20260927/pretrain/data.jsonl", encoding="utf-8") as f:
+with open("datasets/pretrain/data.jsonl", encoding="utf-8") as f:
     for line in f:
         passed.add(os.path.basename(str(json.loads(line)["meta"]["source"])))
 print(f"通过质检来源: {len(passed)}")

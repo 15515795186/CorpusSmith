@@ -67,7 +67,7 @@ class ConfigTest(unittest.TestCase):
         self.assertTrue(config.input_dirs, "默认输入目录不应为空")
         for key, path in config.input_dirs.items():
             self.assertTrue(path.startswith("data/"), f"{key} 默认路径应为 data/ 下: {path}")
-        self.assertEqual(config.output_dir, "datasets_v3_20260927")   # 默认输出 = 最终产出目录
+        self.assertEqual(config.output_dir, "datasets")   # 默认输出 = 最终产出目录
 
     def test_from_json_ignores_unknown_keys(self):
         tmp = workspace_tempdir()
@@ -155,7 +155,6 @@ class ConfigTest(unittest.TestCase):
                        if f.startswith("run_config") and f.endswith(".json"))
         self.assertTrue(names, "至少应存在一个运行配置")
         # 当前保留的两个入口: 全流程 / 只跑 COT
-        self.assertIn("run_config_v3.json", names)
         self.assertIn("run_config_cot_sft.json", names)
         for name in names:
             config = ProcessorConfig.from_json(os.path.join(cfg_dir, name))
@@ -170,21 +169,36 @@ if __name__ == "__main__":
     unittest.main()
 
 class DefaultsAreProductionTest(unittest.TestCase):
-    """默认参数就是 v3 生产配置 —— 裸跑即生产跑, 不需要挂 --config"""
+    """默认参数就是最终生产配置 —— 裸跑即生产跑, 不需要挂 --config
 
-    def test_defaults_match_run_config_v3(self):
-        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        with open(os.path.join(root, "file_processor", "run_config_v3.json"), encoding="utf-8") as f:
-            prod = json.load(f)
-        config = ProcessorConfig()
-        actual = config.to_dict()
-        for key, want in prod.items():
-            if key == "review_output":
-                # 默认留空 = 跟随 output_dir, 解析后应与 v3 的显式值一致
-                self.assertEqual(os.path.normpath(config.review_output_path()),
-                                 os.path.normpath(want), key)
-                continue
-            self.assertEqual(actual.get(key), want, "默认值与 v3 配置不一致: %s" % key)
+    关键项在这里写成显式常量: 改 config.py 的默认值会让本测试变红, 逼着改动是有意为之。
+    """
+
+    PRODUCTION = {
+        "input_dirs": {
+            "pdf_download": "data/爬取语料/文本pdf英文版",
+            "pdf_download_cn": "data/爬取语料/文本pdf中文版",
+            "pdf_photo": "data/爬取语料/版式pdf英文版",
+            "pdf_photo_cn": "data/爬取语料/版式pdf中文版",
+            "word": "data/爬取语料/word",
+            "html_source": "data/爬取语料/源码html",
+            "screenshot": "data/爬取语料/截图html",
+            "txt": "data/爬取语料/txt",
+        },
+        "output_dir": "datasets",
+        "output_types": ["pretrain", "instruction", "cot"],
+        "enable_llm": True,
+        "llm_max_concurrency": 8,
+        "llm_max_tokens": 4096,
+        "quality_min_total": 18,
+        "resume": True,
+        "ppl_threshold": 25,
+    }
+
+    def test_defaults_are_production_values(self):
+        actual = ProcessorConfig().to_dict()
+        for key, want in self.PRODUCTION.items():
+            self.assertEqual(actual.get(key), want, "默认值与生产参数不一致: %s" % key)
 
     def test_default_review_output_follows_output_dir(self):
         c = ProcessorConfig(output_dir="demo_out")

@@ -63,8 +63,7 @@ class LLMProviderTest(unittest.TestCase):
         self.assertEqual(q3.base_url, "https://api.deepseek.com/")
 
     def test_run_configs_switched_to_deepseek(self):
-        for rel in ("file_processor/run_config_v3.json",
-                    "file_processor/run_config_cot_sft.json"):
+        for rel in ("file_processor/run_config_cot_sft.json",):
             with open(os.path.join(ROOT, rel), encoding="utf-8") as f:
                 d = json.load(f)
             self.assertEqual(d.get("llm_provider"), "deepseek", rel)

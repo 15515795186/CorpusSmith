@@ -13,7 +13,6 @@ file_processor/
 ├── dotenv.py          零依赖 .env 加载器（main 在读环境变量之前调用）
 ├── pipeline.py        编排器 FileProcessorPipeline（本包的"主函数"）
 ├── quality_scorer.py  LLM 文档质检（deepseek-flash，OpenAI 兼容端点）
-├── run_config_v3.json      生产配置：最终语料 24 份 → 三份产出
 ├── run_config_cot_sft.json 只跑 COT（以既有 SFT 问答对为素材）
 ├── readers/    ──┐
 ├── cleaners/     ├─ 被 pipeline 组合（依赖方向单向：pipeline → 各层，层间不互调）

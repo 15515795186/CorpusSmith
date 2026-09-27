@@ -12,21 +12,21 @@ from typing import Optional
 @dataclass
 class ProcessorConfig:
     # ========== 路径 ==========
-    # 默认输入 = **项目最终语料**: 第三版爬取语料(data/爬取语料_v3, 8 类 × 3 = 24 份)
+    # 默认输入 = **项目最终语料**: 第三版爬取语料(data/爬取语料, 8 类 × 3 = 24 份)
     # 初版(400 份)与第二版(40 份)语料已删除(曾作测试用例); 换输入用 --input-dir / --files
     # 或 JSON 配置覆盖(单文件用 files 列表, 目录用 input_dirs)
     input_dirs: dict = field(default_factory=lambda: {
-        "pdf_download": "data/爬取语料_v3/文本pdf英文版",
-        "pdf_download_cn": "data/爬取语料_v3/文本pdf中文版",
-        "pdf_photo": "data/爬取语料_v3/版式pdf英文版",
-        "pdf_photo_cn": "data/爬取语料_v3/版式pdf中文版",
-        "word": "data/爬取语料_v3/word",
-        "html_source": "data/爬取语料_v3/源码html",
-        "screenshot": "data/爬取语料_v3/截图html",
-        "txt": "data/爬取语料_v3/txt",
+        "pdf_download": "data/爬取语料/文本pdf英文版",
+        "pdf_download_cn": "data/爬取语料/文本pdf中文版",
+        "pdf_photo": "data/爬取语料/版式pdf英文版",
+        "pdf_photo_cn": "data/爬取语料/版式pdf中文版",
+        "word": "data/爬取语料/word",
+        "html_source": "data/爬取语料/源码html",
+        "screenshot": "data/爬取语料/截图html",
+        "txt": "data/爬取语料/txt",
     })
     files: Optional[list] = None
-    output_dir: str = "datasets_v3_20260927"
+    output_dir: str = "datasets"
     output_prefix: str = ""
 
     # ========== OCR（Qwen-VL API）==========

@@ -30,7 +30,6 @@ LLM_Data_Test/
 │   ├── config.py                    # 全局配置（dataclass + JSON 覆盖）
 │   ├── dotenv.py                    # 零依赖 .env 加载器（真实环境变量优先）
 │   ├── quality_scorer.py            # deepseek-flash 多维度质量评分（并发）
-│   ├── run_config_v3.json           # 运行配置：全流程（最终语料 v3 的 24 份 → 三份产出）
 │   ├── run_config_cot_sft.json      # 运行配置：只跑 COT（以既有 SFT 问答对为素材）
 │   ├── readers/                     # pdf / word / html / txt / qwen-vl ocr（各有 README）
 │   ├── cleaners/                    # text_cleaner / html_cleaner / quality_filter（README）
@@ -39,7 +38,7 @@ LLM_Data_Test/
 │   ├── llm/                         # 可选：dashscope 生成器（README）
 │   └── utils/                       # lang_detect / dedup / stats / cache（README）
 ├── data/                            # 原始数据 + 数据构建工具链（详见 data/README.md）
-│   ├── 爬取语料_v3/                 ★ 项目最终输入：8 类 × 3 = 24 份（见下方说明）
+│   ├── 爬取语料/                 ★ 项目最终输入：8 类 × 3 = 24 份（见下方说明）
 │   ├── 爬取语料_v2/                 第二版（40 份，备用/测试）
 │   ├── 爬取语料/                    初版（80 份，测试用例）
 │   ├── 文本pdf/                     50 篇英文论文 PDF（文字层，初版测试语料）
@@ -53,9 +52,9 @@ LLM_Data_Test/
 │   ├── tech_output/                数据构建暂存区
 │   ├── 爬取语料/                    初版爬取语料（80 份）
 │   ├── 爬取语料_v2/                 第二版（40 份，备用）
-│   ├── 爬取语料_v3/                 第三版（8 类 × 3 = 24 份，当前主用；清单见 data/_pipeline/manifest_v3.json）
+│   ├── 爬取语料/                 第三版（8 类 × 3 = 24 份，当前主用；清单见 data/_pipeline/manifest_v3.json）
 │   └── _pipeline/                  采集/生成/校验脚本（重建数据时使用）
-├── datasets_v3_20260927/            # 当前产出（pretrain 237 / instruction 165 / cot 51；目录名由 output_dir 配置）
+├── datasets/            # 当前产出（pretrain 237 / instruction 165 / cot 51；目录名由 output_dir 配置）
 ├── docs/                            # 分析留档（对账_COT第三轮_20260927.md、薄答案实例_20260927.md）
 ├── tests/                           # 单元与端到端测试
 ├── _archive/                        # 已废弃的本地 OCR 方案（见其 README）
@@ -120,9 +119,9 @@ python check_progress.py
 
 **入口与输出目录**
 
-- **不带任何参数 = 生产运行**：输入 = 项目最终语料 `data/爬取语料_v3`（8 类 × 3 = 24 份），
-  输出 = `datasets_v3_20260927/`，`resume=true`（只补不覆盖；要清空重建加 `--rebuild`）。
-- `ProcessorConfig()` 的默认值**就是 v3 最终配置**（逐键与 `run_config_v3.json` 一致，有单测锁定），
+- **不带任何参数 = 生产运行**：输入 = 项目最终语料 `data/爬取语料`（8 类 × 3 = 24 份），
+  输出 = `datasets/`，`resume=true`（只补不覆盖；要清空重建加 `--rebuild`）。
+- `ProcessorConfig()` 的默认值**就是最终生产配置**（有单测把关键项锁成显式常量），
   所以日常不需要挂 `--config`。
 - 演练 / 试跑请显式换输出目录：`--output-dir demo_out`（默认输出目录就是最终产出目录）。
 - 只想重跑 COT 用 `--config file_processor/run_config_cot_sft.json`（以既有 SFT 问答对为素材）。
@@ -207,7 +206,7 @@ python check_progress.py
 ## 输出说明
 
 ```
-datasets_v3_20260927/          # 实际目录名由 output_dir 决定（本轮 = datasets_v3_20260927）
+datasets/          # 实际目录名由 output_dir 决定（本轮 = datasets）
 ├── pretrain/
 │   ├── data.jsonl
 │   └── metadata.json          # 记录数 / 来源数（累计口径）/ 本次新增来源 / 生成时间 / 关键配置

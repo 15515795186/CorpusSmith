@@ -18,7 +18,7 @@ LLM 数据集处理工作流入口
   python -m file_processor.main --rebuild
 
   # 换输入 / 换输出目录 / 只出部分数据集
-  python -m file_processor.main --files data/爬取语料_v3/txt/某份.txt
+  python -m file_processor.main --files data/爬取语料/txt/某份.txt
   python -m file_processor.main --input-dir data/别的语料
   python -m file_processor.main --output-dir demo_out --output-types pretrain
 
@@ -89,7 +89,7 @@ def parse_args():
 示例:
   python -m file_processor.main
   python -m file_processor.main --input-dir data
-  python -m file_processor.main --config file_processor/run_config_v3.json --resume
+  python -m file_processor.main --resume
   python -m file_processor.main --files a.pdf,b.docx,c.html
   python -m file_processor.main --output-types pretrain,instruction --max-workers 8
         """,
