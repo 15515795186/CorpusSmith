@@ -1,25 +1,41 @@
 #!/usr/bin/env python
 """
 LLM 数据集处理工作流入口
-批量读取多格式文件，清洗，转换为3种LLM训练数据集格式
+批量读取多格式文件 → 清洗 → 过滤(启发式 + PPL 异常闸) → 质量评分 → 转换为 3 种 LLM 训练数据集
+
+前置: 项目根 `.env` 填模型凭据(已被 gitignore)
+  DEEPSEEK_API_KEY   文本 LLM —— SFT/COT 生成、质量评分、语义抽检(默认 provider)
+  DASHSCOPE_API_KEY  仅 OCR 视觉链(qwen-vl-plus); 文本生成已不依赖它
 
 用法:
-  # 使用内置默认路径（data/ 下的 8 个目录，共 400 个文件）
-  python -m file_processor.main
+  # 主流程: 第三版爬取语料(8 类 × 3 = 24 份) -> pretrain / instruction / cot
+  python -m file_processor.main --config file_processor/run_config_v3.json
 
-  # 指定配置
-  python -m file_processor.main --config file_processor/run_config.json
+  # 只从既有 SFT 问答对生成 COT(判类 → 回原文搜据 → 写规范字段)
+  python -m file_processor.main --config file_processor/run_config_cot_sft.json
 
-  # 只处理需要 OCR 的文件
+  # 只处理需要 OCR 的文件(截图 / 扫描 PDF)
   python -m file_processor.main --config file_processor/run_config_ocr.json
 
-  # 断点续跑（OCR 中断后接着跑，已处理的文件不会重复调用 API）
+  # 断点续跑：保留已有输出，跳过已处理来源(中断后接着跑, 不重复调 API)
   python -m file_processor.main --config file_processor/run_config_ocr.json --resume
 
-  # 指定具体文件 / 只输出部分数据集
+  # 内置默认路径(data/ 下 8 个目录, 共 400 份初版语料)
+  python -m file_processor.main
+
+  # 指定具体文件 / 只输出部分数据集 / 指定输出目录与并发
   python -m file_processor.main --files doc1.pdf,doc2.docx --output-types pretrain
-  # 指定具体文件 / 指定输出路径(demo_out) / 指定并发数量(2)
-  python -m file_processor.main --files doc1.pdf,doc2.docx --output-dir demo_out --max-workers 2 --llm --llm-provider dashscope --llm-model qwen-plus
+  python -m file_processor.main --files doc1.pdf,doc2.docx --output-dir demo_out --max-workers 2
+
+  # 换模型: provider 默认 deepseek(deepseek-flash); 需要更强推理可换 deepseek-v4-pro;
+  #         百炼欠费后文本链已切 DeepSeek, 传 dashscope 仅作回退
+  python -m file_processor.main --llm --llm-provider deepseek --llm-model deepseek-v4-pro
+
+  # 无凭据时跑结构链路(跳过质量评分): 加 --no-quality
+  python -m file_processor.main --config file_processor/run_config_v3.json --no-quality
+
+产出: <output_dir>/{pretrain,instruction,cot}/data.jsonl + metadata.json,
+      以及 run_report.json / rejected.jsonl / review_output*.jsonl(争议样本待人工审核清单)
 """
 
 import argparse
