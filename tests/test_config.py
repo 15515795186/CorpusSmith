@@ -145,11 +145,21 @@ class ConfigTest(unittest.TestCase):
         self.assertTrue(d.llm_base_url().startswith("https://dashscope.aliyuncs.com/"))
 
     def test_repo_run_configs_are_valid(self):
+        """仓库内所有 run_config*.json 都能解析, 且关键项合法"""
         base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        for name in ("run_config.json", "run_config_ocr.json"):
-            path = os.path.join(base, "file_processor", name)
-            config = ProcessorConfig.from_json(path)
-            self.assertIn("pretrain", config.output_types)
+        cfg_dir = os.path.join(base, "file_processor")
+        names = sorted(f for f in os.listdir(cfg_dir)
+                       if f.startswith("run_config") and f.endswith(".json"))
+        self.assertTrue(names, "至少应存在一个运行配置")
+        # 当前保留的两个入口: 全流程 / 只跑 COT
+        self.assertIn("run_config_v3.json", names)
+        self.assertIn("run_config_cot_sft.json", names)
+        for name in names:
+            config = ProcessorConfig.from_json(os.path.join(cfg_dir, name))
+            # 各配置的 output_types 不同(cot_sft 只出 cot), 只校验合法与非空
+            self.assertTrue(config.output_types, name)
+            self.assertTrue(set(config.output_types) <= {"pretrain", "instruction", "cot"},
+                            name)
             self.assertGreater(config.max_workers, 0)
 
 
