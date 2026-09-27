@@ -68,8 +68,8 @@ def parse_args():
                         choices=["pretrain", "instruction", "cot"],
                         help="数据集名称 (default: pretrain)")
     parser.add_argument("--api-key", default=None,
-                        help="DashScope API key（默认读取环境变量 DASHSCOPE_API_KEY）")
-    parser.add_argument("--model", default="qwen-plus", help="评分模型")
+                        help="文本链 API key（默认读取环境变量 DEEPSEEK_API_KEY）")
+    parser.add_argument("--model", default="deepseek-flash", help="评分模型")
     parser.add_argument("--min-per-dim", type=int, default=3, help="单项最低分")
     parser.add_argument("--min-total", type=int, default=20, help="总分最低分")
     parser.add_argument("--workers", type=int, default=4, help="并发数")
@@ -85,10 +85,10 @@ def main():
     args = parse_args()
     load_dotenv()  # 项目根 .env 可用时自动补齐 key（真实环境变量优先）
 
-    api_key = args.api_key or os.environ.get("DASHSCOPE_API_KEY", "")
+    api_key = args.api_key or os.environ.get("DEEPSEEK_API_KEY", "")
     if not api_key:
         raise SystemExit(
-            "[ERROR] 未提供 API key。请设置环境变量 DASHSCOPE_API_KEY "
+            "[ERROR] 未提供 API key。请设置环境变量 DEEPSEEK_API_KEY "
             "或使用 --api-key（不要把 key 写进代码）")
 
     data_file = resolve_data_file(args.dataset)
@@ -102,7 +102,7 @@ def main():
     print(f"记录数: {len(records)} | 模型: {args.model} | 并发: {args.workers}")
 
     scorer = QualityScorer(
-        api_key=api_key, model=args.model,
+        api_key=api_key, model=args.model, provider="deepseek",
         min_per_dimension=args.min_per_dim, min_total=args.min_total,
         max_workers=args.workers,
     )

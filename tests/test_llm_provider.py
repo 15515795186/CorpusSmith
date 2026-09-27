@@ -50,8 +50,6 @@ class LLMProviderTest(unittest.TestCase):
                                provider="deepseek", base_url="https://api.deepseek.com/")
         kw = g._request_kwargs([{"role": "user", "content": "hi"}])
         self.assertNotIn("temperature", kw)
-        g2 = DashScopeGenerator(api_key="k", model="qwen3.5-plus", provider="dashscope")
-        self.assertIn("temperature", g2._request_kwargs([{"role": "user", "content": "hi"}]))
 
     def test_quality_scorer_uses_provider_endpoint(self):
         q = QualityScorer(api_key="k", model="deepseek-flash",
@@ -61,8 +59,8 @@ class LLMProviderTest(unittest.TestCase):
         # 未显式给 base_url 时按 provider 兜底
         q2 = QualityScorer(api_key="k", model="deepseek-flash", provider="deepseek")
         self.assertEqual(q2.base_url, "https://api.deepseek.com/")
-        q3 = QualityScorer(api_key="k", model="qwen-plus", provider="dashscope")
-        self.assertTrue(q3.base_url.startswith("https://dashscope.aliyuncs.com/"))
+        q3 = QualityScorer(api_key="k", model="deepseek-v4-pro", provider="deepseek")
+        self.assertEqual(q3.base_url, "https://api.deepseek.com/")
 
     def test_run_configs_switched_to_deepseek(self):
         for rel in ("file_processor/run_config_v3.json",
@@ -88,3 +86,16 @@ class LLMProviderTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class TextChainProviderTest(unittest.TestCase):
+    """文本链只支持 deepseek: dashscope 仅用于 OCR 视觉链"""
+
+    def test_pipeline_rejects_dashscope_text_chain(self):
+        from file_processor.pipeline import FileProcessorPipeline
+        cfg = ProcessorConfig()
+        cfg.enable_llm = True                 # 否则 _init_llm_generator 直接返回 None
+        cfg.llm_provider = "dashscope"
+        pipe = FileProcessorPipeline.__new__(FileProcessorPipeline)   # 跳过 __init__, 避免创建目录
+        pipe.config = cfg
+        with self.assertRaises(ValueError):
+            pipe._init_llm_generator()
