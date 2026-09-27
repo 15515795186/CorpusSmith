@@ -18,9 +18,13 @@ LLM 数据集处理工作流入口
   python -m file_processor.main --config file_processor/run_config_ocr.json
 
   # 断点续跑：保留已有输出，跳过已处理来源(中断后接着跑, 不重复调 API)
-  python -m file_processor.main --config file_processor/run_config_ocr.json --resume
+  python -m file_processor.main --config file_processor/run_config_v3.json --resume
 
-  # 内置默认路径(data/ 下 8 个目录, 共 400 份初版语料)
+  # 清空目标数据集重建(默认行为; 配置里 resume=true 时用它覆盖)
+  python -m file_processor.main --config file_processor/run_config_v3.json --rebuild
+
+  # 不带 --config 时走默认值: 输入 = 最终语料 v3, 输出 = datasets/(沙盒目录, 只做演练,
+  # 不会碰 datasets_v3_20260927 里的最终产出; 生产请用 run_config_v3.json)
   python -m file_processor.main
 
   # 指定具体文件 / 只输出部分数据集 / 指定输出目录与并发
@@ -93,7 +97,7 @@ def parse_args():
 示例:
   python -m file_processor.main
   python -m file_processor.main --input-dir data
-  python -m file_processor.main --config file_processor/run_config_ocr.json --resume
+  python -m file_processor.main --config file_processor/run_config_v3.json --resume
   python -m file_processor.main --files a.pdf,b.docx,c.html
   python -m file_processor.main --output-types pretrain,instruction --max-workers 8
         """,
@@ -147,6 +151,8 @@ def parse_args():
     parser.add_argument("--config", default=None, help="JSON配置文件路径")
     parser.add_argument("--resume", action="store_true",
                         help="断点续跑：保留已有输出，跳过已处理来源")
+    parser.add_argument("--rebuild", action="store_true",
+                        help="清空目标 data.jsonl 重建(显式动作, 覆盖配置里的 resume=true)")
     parser.add_argument("--no-cache", action="store_true", help="禁用读取结果缓存")
     parser.add_argument("--clear-cache", action="store_true", help="清空读取缓存后退出")
     parser.add_argument("--no-rejected", action="store_true",
@@ -245,6 +251,11 @@ def build_config(args) -> ProcessorConfig:
     # ---- 运行控制 ----
     if args.resume:
         config.resume = True
+    if args.rebuild:
+        # 显式清空重建: 优先级高于 --resume 与配置里的 resume=true
+        if args.resume:
+            logging.getLogger(__name__).warning("--resume 与 --rebuild 同时给出, 以 --rebuild 为准")
+        config.resume = False
     if args.no_cache:
         config.use_read_cache = False
     if args.no_rejected:
