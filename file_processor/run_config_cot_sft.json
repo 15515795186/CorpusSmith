@@ -21,7 +21,7 @@
   "llm_batch_size": 5,
   "llm_max_concurrency": 8,
   "llm_temperature": 0.3,
-  "llm_max_tokens": 2048,
+  "llm_max_tokens": 4096,
   "cot_distribution_enforce": true,
   "cot_distribution_tolerance": 0.05,
   "sample_check_ratio": 0.1,
@@ -52,5 +52,6 @@
   "keep_unknown_language": true,
   "llm_provider": "deepseek",
   "deepseek_base_url": "https://api.deepseek.com/",
-  "deepseek_model": "DeepSeek-V4.1-Flash"
+  "deepseek_model": "deepseek-flash",
+  "llm_cot_max_tokens": 6144
 }

@@ -118,10 +118,10 @@ class ConfigTest(unittest.TestCase):
     def test_provider_resolution_and_ocr_key_separation(self):
         """模型/端点按 provider 解析; OCR(视觉) key 与文本 key 分离"""
         c = ProcessorConfig()
-        self.assertEqual(c.llm_model(), "DeepSeek-V4.1-Flash")
+        self.assertEqual(c.llm_model(), "deepseek-flash")
         self.assertEqual(c.llm_base_url(), "https://api.deepseek.com/")
-        self.assertEqual(c.quality_model_resolved(), "DeepSeek-V4.1-Flash")
-        self.assertEqual(c.cot_model(), "DeepSeek-V4.1-Flash")
+        self.assertEqual(c.quality_model_resolved(), "deepseek-flash")
+        self.assertEqual(c.cot_model(), "deepseek-flash")
 
         old = os.environ.get("DASHSCOPE_API_KEY")
         old_ds = os.environ.get("DEEPSEEK_API_KEY")

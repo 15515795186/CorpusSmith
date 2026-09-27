@@ -55,7 +55,7 @@ class ProcessorConfig:
     llm_provider: str = "deepseek"          # deepseek | dashscope
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com/"
-    deepseek_model: str = "DeepSeek-V4.1-Flash"
+    deepseek_model: str = "deepseek-flash"
     # DashScope: 文本生成已切 DeepSeek, 此处仅保留给 OCR 视觉链(qwen-vl-plus)
     dashscope_api_key: str = ""
     dashscope_model: str = "qwen3.5-plus"  # 仅当 llm_provider="dashscope" 时用于文本生成
@@ -65,7 +65,7 @@ class ProcessorConfig:
     llm_batch_size: int = 5
     llm_max_concurrency: int = 3
     llm_temperature: float = 0.3
-    llm_max_tokens: int = 2048
+    llm_max_tokens: int = 3072            # DeepSeek 为推理型模型, 思考 token 也计入上限, 预算过小会把可见输出挤空
 
     # ========== 样本级校验(转换后,从严) ==========
     cot_distribution_enforce: bool = True     # COT 四类分布硬门禁: 超配裁剪 + 欠配告警
@@ -156,7 +156,7 @@ class ProcessorConfig:
     def llm_model(self) -> str:
         """当前 provider 的文本生成模型名"""
         if self.llm_provider == "deepseek":
-            return self.deepseek_model or "DeepSeek-V4.1-Flash"
+            return self.deepseek_model or "deepseek-flash"
         return self.dashscope_model
 
     def llm_base_url(self) -> str:

@@ -30,13 +30,13 @@ class LLMProviderTest(unittest.TestCase):
                                provider=c.llm_provider, base_url=c.llm_base_url())
         self.assertEqual(g.provider, "deepseek")
         self.assertEqual(g.base_url, "https://api.deepseek.com/")
-        self.assertEqual(g.model, "DeepSeek-V4.1-Flash")
+        self.assertEqual(g.model, "deepseek-flash")
         self.assertIs(OpenAICompatGenerator, DashScopeGenerator)
 
         old = os.environ.get("DEEPSEEK_API_KEY")
         os.environ["DEEPSEEK_API_KEY"] = "env-key"
         try:
-            g2 = DashScopeGenerator(model="DeepSeek-V4.1-Flash", provider="deepseek")
+            g2 = DashScopeGenerator(model="deepseek-flash", provider="deepseek")
             self.assertEqual(g2.api_key, "env-key")
         finally:
             if old is None:
@@ -46,7 +46,7 @@ class LLMProviderTest(unittest.TestCase):
 
     def test_generator_omits_temperature_for_deepseek(self):
         """DeepSeek 端点对 temperature 敏感 → 只给非 deepseek 模型带上"""
-        g = DashScopeGenerator(api_key="k", model="DeepSeek-V4.1-Flash",
+        g = DashScopeGenerator(api_key="k", model="deepseek-flash",
                                provider="deepseek", base_url="https://api.deepseek.com/")
         kw = g._request_kwargs([{"role": "user", "content": "hi"}])
         self.assertNotIn("temperature", kw)
@@ -54,12 +54,12 @@ class LLMProviderTest(unittest.TestCase):
         self.assertIn("temperature", g2._request_kwargs([{"role": "user", "content": "hi"}]))
 
     def test_quality_scorer_uses_provider_endpoint(self):
-        q = QualityScorer(api_key="k", model="DeepSeek-V4.1-Flash",
+        q = QualityScorer(api_key="k", model="deepseek-flash",
                           provider="deepseek", base_url="https://api.deepseek.com/")
         self.assertEqual(q.provider, "deepseek")
         self.assertEqual(q.base_url, "https://api.deepseek.com/")
         # 未显式给 base_url 时按 provider 兜底
-        q2 = QualityScorer(api_key="k", model="DeepSeek-V4.1-Flash", provider="deepseek")
+        q2 = QualityScorer(api_key="k", model="deepseek-flash", provider="deepseek")
         self.assertEqual(q2.base_url, "https://api.deepseek.com/")
         q3 = QualityScorer(api_key="k", model="qwen-plus", provider="dashscope")
         self.assertTrue(q3.base_url.startswith("https://dashscope.aliyuncs.com/"))
@@ -70,7 +70,7 @@ class LLMProviderTest(unittest.TestCase):
             with open(os.path.join(ROOT, rel), encoding="utf-8") as f:
                 d = json.load(f)
             self.assertEqual(d.get("llm_provider"), "deepseek", rel)
-            self.assertEqual(d.get("deepseek_model"), "DeepSeek-V4.1-Flash", rel)
+            self.assertEqual(d.get("deepseek_model"), "deepseek-flash", rel)
             self.assertEqual(d.get("deepseek_base_url"), "https://api.deepseek.com/", rel)
 
     def test_cot_generator_wiring(self):
@@ -83,7 +83,7 @@ class LLMProviderTest(unittest.TestCase):
         g = p._init_llm_generator()
         self.assertEqual(g.provider, "deepseek")
         self.assertEqual(g.base_url, "https://api.deepseek.com/")
-        self.assertEqual(g.model, "DeepSeek-V4.1-Flash")
+        self.assertEqual(g.model, "deepseek-flash")
 
 
 if __name__ == "__main__":

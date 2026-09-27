@@ -145,7 +145,7 @@ class QualityScorer:
                         {"role": "user", "content": f"请评估以下文本质量：\n\n{sample}"},
                     ],
                     temperature=0.1,
-                    max_tokens=512,
+                    max_tokens=3072,     # DeepSeek 推理型模型: 扣除隐藏思考后仍要留足 JSON
                 )
                 content = response.choices[0].message.content
                 result = self._parse_response(content)

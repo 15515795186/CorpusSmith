@@ -374,7 +374,11 @@ Therefore, the answer is: {output}"""
 
     # 列表序号(1. / 一、)不是"链中的数值", 校验前先剥掉 ——
     # 否则解释/建议类的链只因编号带数字就被标成"已验证"
-    _LIST_MARKER = re.compile(r'^\s*(?:\d{1,3}[.)、]|[一二三四五六七八九十]{1,3}[、.)])\s*', re.M)
+    # 列表序号既可出现在行首, 也可跟在空白/冒号之后(如 'the answer is: 1. xxx');
+    # 序号后紧跟数字的情形(如小数 3.5)不算序号, 必须保留 —— 否则可核数值被吃掉
+    _LIST_MARKER = re.compile(
+        r'(?:(?<=^)|(?<=[\s:：]))(?:\d{1,3}[.)、](?!\d)|[一二三四五六七八九十]{1,3}[、.)])\s*',
+        re.M)
 
     @classmethod
     def _strip_list_markers(cls, chain: str) -> str:
