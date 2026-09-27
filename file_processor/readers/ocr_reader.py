@@ -34,11 +34,14 @@ class QwenVLOcrReader(BaseReader):
 
     def __init__(self, api_key: str = "", model: str = "qwen-vl-plus",
                  prompt: str = DEFAULT_OCR_PROMPT,
-                 max_retries: int = 3):
+                 max_retries: int = 3, max_tokens: int = 8000):
         self.api_key = api_key or os.getenv("DASHSCOPE_API_KEY", "")
         self.model = model
         self.prompt = prompt
         self.max_retries = max_retries
+        # 长图(整页截图)必须显式抬输出上限: 不传时用服务端默认(约 1-2k tokens),
+        # 整页文字会在句中被腰斩 → 下游质量评委判"真实截断"整份淘汰
+        self.max_tokens = max_tokens
 
     def can_handle(self, filepath: str) -> bool:
         return filepath.lower().endswith(
@@ -82,6 +85,7 @@ class QwenVLOcrReader(BaseReader):
                 response = MultiModalConversation.call(
                     model=self.model,
                     messages=messages,
+                    max_tokens=self.max_tokens,
                 )
                 if response.status_code == 200:
                     return self._extract_text(response.output.choices[0].message.content)

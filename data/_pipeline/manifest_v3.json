@@ -32,22 +32,6 @@
   "source": "reuse:data/爬取语料_v2/版式pdf英文版/epa_cwa_fca_fact_sheet.pdf"
  },
  {
-  "file": "解释_诺如病毒传播动力学建模与稳定性分析.pdf",
-  "type": "文本pdf中文版",
-  "class": "解释",
-  "chars": 22956,
-  "pages": 0,
-  "source": "reuse:data/爬取语料_v2/文本pdf中文版/150745_诺如病毒传播的动力学建模与稳定性分析.pdf"
- },
- {
-  "file": "建议_SOLO分类理论下高考数学试题评析与解题策略.pdf",
-  "type": "文本pdf中文版",
-  "class": "建议",
-  "chars": 13529,
-  "pages": 0,
-  "source": "reuse:data/爬取语料_v2/文本pdf中文版/150744_SOLO分类理论下高考数学试题评析与解题策略_以2025.pdf"
- },
- {
   "file": "推理_基于贝叶斯岭回归的油料需求预测研究.pdf",
   "type": "文本pdf中文版",
   "class": "推理",
@@ -72,28 +56,12 @@
   "source": "reuse:data/爬取语料_v2/版式pdf中文版/147963_智能调度系统在会议保障中的实现与应用.pdf"
  },
  {
-  "file": "比较_基于多模型比较的肺炎X射线影像识别研究.pdf",
-  "type": "版式pdf中文版",
-  "class": "比较",
-  "chars": 11016,
-  "pages": 0,
-  "source": "reuse:data/爬取语料_v2/版式pdf中文版/148822_基于多模型比较的肺炎X射线影像识别方法研究.pdf"
- },
- {
   "file": "推理_捕食介导的絮凝促进微生物食物链模型分析.pdf",
   "type": "版式pdf中文版",
   "class": "推理",
   "chars": 21674,
   "pages": 0,
   "source": "reuse:data/爬取语料_v2/版式pdf中文版/149175_捕食介导的絮凝促进微生物食物链模型一致持久性分析.pdf"
- },
- {
-  "file": "建议_河南省建设工程管理文件.docx",
-  "type": "word",
-  "class": "建议",
-  "chars": "?",
-  "pages": 0,
-  "source": "reuse:data/爬取语料_v2/word/word_05_e775227929298780ac6f.docx"
  },
  {
   "file": "推理_教育部年度报告类文件.docx",
@@ -104,22 +72,6 @@
   "source": "reuse:data/爬取语料_v2/word/word_04_7362e69a41dd396dd4ab.docx"
  },
  {
-  "file": "比较_驾驶疲劳EEG检测二分类与三分类对比研究.docx",
-  "type": "word",
-  "class": "比较",
-  "chars": "?",
-  "pages": 0,
-  "source": "reuse:data/爬取语料_v2/word/比较_150193_驾驶疲劳EEG检测中二分类与三分类的对.docx"
- },
- {
-  "file": "解释_runoob_python3_基础语法.html",
-  "type": "源码html",
-  "class": "解释",
-  "chars": "?",
-  "pages": 0,
-  "source": "reuse:data/爬取语料_v2/源码html/runoob_python3_basic_syntax.html"
- },
- {
   "file": "推理_libretexts_lacity_微积分基本定理习题.html",
   "type": "源码html",
   "class": "推理",
@@ -128,52 +80,12 @@
   "source": "reuse:data/爬取语料_v2/源码html/libretexts_lacity_FTC_exercises.html"
  },
  {
-  "file": "建议_runoob_python3_输入输出教程.png",
-  "type": "截图html",
-  "class": "建议",
-  "chars": "?",
-  "pages": 0,
-  "source": "reuse:data/爬取语料_v2/截图html/runoob_python3_input_output.png"
- },
- {
-  "file": "比较_cnblogs_多线程同步机制性能对比.png",
-  "type": "截图html",
-  "class": "比较",
-  "chars": "?",
-  "pages": 0,
-  "source": "reuse:data/爬取语料_v2/截图html/cnblogs_multithread_sync_comparison.png"
- },
- {
   "file": "推理_nist_物理常数表.png",
   "type": "截图html",
   "class": "推理",
   "chars": "?",
   "pages": 0,
   "source": "reuse:data/爬取语料_v2/截图html/nist_constants_values.png"
- },
- {
-  "file": "解释_融合多种安全机制的智能问答系统.txt",
-  "type": "txt",
-  "class": "解释",
-  "chars": 10053,
-  "pages": 0,
-  "source": "reuse:data/爬取语料_v2/txt/解释_一种融合多种安全机制的智能问答系统.txt"
- },
- {
-  "file": "建议_双层Buck_Boost电池主动均衡模糊控制策略.txt",
-  "type": "txt",
-  "class": "建议",
-  "chars": 5321,
-  "pages": 0,
-  "source": "reuse:data/爬取语料_v2/txt/建议_双层Buck_Boost电池主动均衡系统的模糊控制策略研究.txt"
- },
- {
-  "file": "比较_GSR与ECG短时情感识别性能差异分析.txt",
-  "type": "txt",
-  "class": "比较",
-  "chars": 6632,
-  "pages": 0,
-  "source": "reuse:data/爬取语料_v2/txt/比较_统一实验范式下GSR与ECG的短时情感识别_性能差异分析.txt"
  },
  {
   "file": "比较_nasa_next_gen_rps_factsheet.pdf",
@@ -190,5 +102,93 @@
   "chars": 23037,
   "pages": 1,
   "source": "https://math.libretexts.org/Courses/Los_Angeles_City_College/MATH_261%3A_Calculus_I/04%3A_Integration/4.02%3A_The_Definite_Integral/4.2E%3A_Exercises_for_Section_5.2"
+ },
+ {
+  "file": "解释_docs_python_tutorial_introduction.txt",
+  "type": "txt",
+  "class": "解释",
+  "chars": 18508,
+  "pages": 1,
+  "source": "补料:解释_docs_python_tutorial_introduction.txt"
+ },
+ {
+  "file": "建议_docs_python_sorting_howto.txt",
+  "type": "txt",
+  "class": "建议",
+  "chars": 14593,
+  "pages": 1,
+  "source": "补料:建议_docs_python_sorting_howto.txt"
+ },
+ {
+  "file": "比较_cnblogs_synchronized与ReentrantLock.docx",
+  "type": "word",
+  "class": "比较",
+  "chars": 1765,
+  "pages": 1,
+  "source": "补料:比较_cnblogs_synchronized与ReentrantLock.txt"
+ },
+ {
+  "file": "比较_cnblogs_ClickHouse_Loki_ES优劣对比.txt",
+  "type": "txt",
+  "class": "比较",
+  "chars": 2043,
+  "pages": 1,
+  "source": "https://www.cnblogs.com/love-DanDan/p/18409431"
+ },
+ {
+  "file": "解释_150193_驾驶疲劳EEG检测中二分类与三分类的对比研究_pdf.pdf",
+  "type": "文本pdf中文版",
+  "class": "比较",
+  "chars": 15393,
+  "pages": 10,
+  "source": "复用:data/爬取语料_v2/文本pdf中文版\\150193_驾驶疲劳EEG检测中二分类与三分类的对比研究.pdf"
+ },
+ {
+  "file": "比较_cnblogs_synchronized与ReentrantLock对比.png",
+  "type": "截图html",
+  "class": "比较",
+  "chars": 2328,
+  "pages": 1,
+  "source": "https://www.cnblogs.com/rdisheng/p/18260384"
+ },
+ {
+  "file": "建议_有轨电车混动系统控制与参数优化研究综述.pdf",
+  "type": "版式pdf中文版",
+  "class": "建议",
+  "chars": 15345,
+  "pages": 7,
+  "source": "data/爬取语料_v2/版式pdf中文版\\147046_有轨电车混动系统控制与参数优化研究综述.pdf"
+ },
+ {
+  "file": "解释_errors_html.html",
+  "type": "源码html",
+  "class": "解释",
+  "chars": 23810,
+  "pages": 1,
+  "source": "https://docs.python.org/3/tutorial/errors.html"
+ },
+ {
+  "file": "建议_SOLO分类理论下高考数学试题评析与解题策略_以2025.pdf",
+  "type": "文本pdf中文版",
+  "class": "建议",
+  "chars": 13537,
+  "pages": 9,
+  "source": "data/爬取语料_v2/文本pdf中文版\\150744_SOLO分类理论下高考数学试题评析与解题策略_以2025.pdf"
+ },
+ {
+  "file": "解释_python3_string_html.png",
+  "type": "截图html",
+  "class": "解释",
+  "chars": 1622,
+  "pages": 1,
+  "source": "https://www.runoob.com/python3/python3-string.html"
+ },
+ {
+  "file": "解释_一类具有双重免疫清除策略的疟原虫红细胞内期模型动力学分析.docx",
+  "type": "word",
+  "class": "解释",
+  "chars": 15217,
+  "pages": 1,
+  "source": "data/爬取语料_v2/文本pdf中文版\\150815_一类具有双重免疫清除策略的疟原虫红细胞内期模型动力学分析.pdf"
  }
 ]
