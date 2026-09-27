@@ -24,8 +24,11 @@ LLM 数据集处理工作流入口
   python -m file_processor.main
 
   # 指定具体文件 / 只输出部分数据集 / 指定输出目录与并发
+  #   注意: 不带 --config 就是默认参数(输入目录仍是 data/ 下 8 个初版目录, --files 只覆盖"处理哪些文件"),
+  #   与 run_config_v3.json 无关; 想让指定文件也套用 v3 参数, 两个参数一起给
   python -m file_processor.main --files doc1.pdf,doc2.docx --output-types pretrain
   python -m file_processor.main --files doc1.pdf,doc2.docx --output-dir demo_out --max-workers 2
+  python -m file_processor.main --config file_processor/run_config_v3.json --files data/爬取语料_v3/txt/某份.txt
 
   # 换模型: provider 默认 deepseek(deepseek-flash); 需要更强推理可换 deepseek-v4-pro;
   #         百炼欠费后文本链已切 DeepSeek, 传 dashscope 仅作回退
