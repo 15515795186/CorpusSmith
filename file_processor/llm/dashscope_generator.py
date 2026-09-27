@@ -27,22 +27,22 @@ PROVIDER_ENV_KEYS = {
 
 
 class DashScopeGenerator(BaseLLMGenerator):
-    """阿里云 DashScope（通义千问/百炼）调用，OpenAI 兼容模式
+    """通用 OpenAI 兼容端点调用（类名保留历史：最初只对接阿里云 DashScope）
 
-    model 可为: qwen3.5-plus / qwen3.5-max / qwen-plus / deepseek-r1 / deepseek-v3 等
-    （以百炼控制台实际开通的模型为准）
+    按 provider 选端点与密钥；当前文本链只走 deepseek，model 由调用方给出
+    —— 本项目文本链用 deepseek-flash（默认）/ deepseek-v4-pro。
     """
 
     def __init__(self,
                  api_key: str = "",
-                 model: str = "qwen3.5-plus",
+                 model: str = "deepseek-flash",
                  temperature: float = 0.3,
-                 max_tokens: int = 2048,
+                 max_tokens: int = 3072,   # 推理型模型思考 token 也计入上限
                  max_retries: int = 3,
-                 provider: str = "dashscope",
+                 provider: str = "deepseek",
                  base_url: str = ""):
-        self.provider = provider if provider in PROVIDER_BASE_URLS else "dashscope"
-        env_key = PROVIDER_ENV_KEYS.get(self.provider, "DASHSCOPE_API_KEY")
+        self.provider = provider if provider in PROVIDER_BASE_URLS else "deepseek"
+        env_key = PROVIDER_ENV_KEYS.get(self.provider, "DEEPSEEK_API_KEY")
         self.api_key = api_key or os.getenv(env_key, "")
         self.model = model
         self.temperature = temperature

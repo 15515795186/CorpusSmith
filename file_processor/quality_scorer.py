@@ -83,11 +83,11 @@ class QualityScore:
 class QualityScorer:
     """LLM质量评分器"""
 
-    def __init__(self, api_key: str = "", model: str = "qwen-plus",
+    def __init__(self, api_key: str = "", model: str = "deepseek-flash",
                  min_per_dimension: int = 3, min_total: int = 20,
                  batch_size: int = 5, max_retries: int = 4,
                  max_workers: int = 4,
-                 provider: str = "dashscope", base_url: str = ""):
+                 provider: str = "deepseek", base_url: str = ""):
         # 与文本生成同一套 provider 解析: DeepSeek 走 https://api.deepseek.com/
         env_key = "DEEPSEEK_API_KEY" if provider == "deepseek" else "DASHSCOPE_API_KEY"
         default_base = ("https://api.deepseek.com/" if provider == "deepseek"

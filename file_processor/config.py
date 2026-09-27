@@ -13,8 +13,8 @@ from typing import Optional
 class ProcessorConfig:
     # ========== 路径 ==========
     # 默认输入 = **项目最终语料**: 第三版爬取语料(data/爬取语料_v3, 8 类 × 3 = 24 份)
-    # 初版(data/ 下 8 个目录, 400 份)与第二版(data/爬取语料_v2, 40 份)降级为测试用例,
-    # 需要时用 run_config.json / run_config_v2.json 切回；可用 JSON 配置或 CLI 覆盖
+    # 初版(400 份)与第二版(40 份)语料已删除(曾作测试用例); 换输入用 --input-dir / --files
+    # 或 JSON 配置覆盖(单文件用 files 列表, 目录用 input_dirs)
     input_dirs: dict = field(default_factory=lambda: {
         "pdf_download": "data/爬取语料_v3/文本pdf英文版",
         "pdf_download_cn": "data/爬取语料_v3/文本pdf中文版",

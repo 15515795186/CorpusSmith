@@ -8,41 +8,43 @@ LLM 数据集处理工作流入口
   DASHSCOPE_API_KEY  仅 OCR 视觉链(qwen-vl-plus); 文本生成已不依赖它
 
 用法:
-  # 主流程: 第三版爬取语料(8 类 × 3 = 24 份) -> pretrain / instruction / cot
+  # 主流程: 项目最终语料(8 类 × 3 = 24 份) -> pretrain / instruction / cot
   python -m file_processor.main --config file_processor/run_config_v3.json
 
   # 只从既有 SFT 问答对生成 COT(判类 → 回原文搜据 → 写规范字段)
   python -m file_processor.main --config file_processor/run_config_cot_sft.json
 
-  # 只处理需要 OCR 的文件(截图 / 扫描 PDF)
-  python -m file_processor.main --config file_processor/run_config_ocr.json
-
   # 断点续跑：保留已有输出，跳过已处理来源(中断后接着跑, 不重复调 API)
   python -m file_processor.main --config file_processor/run_config_v3.json --resume
 
-  # 清空目标数据集重建(默认行为; 配置里 resume=true 时用它覆盖)
+  # 清空目标数据集重建(覆盖配置里的 resume=true)
   python -m file_processor.main --config file_processor/run_config_v3.json --rebuild
 
-  # 不带 --config 时走默认值: 输入 = 最终语料 v3, 输出 = datasets/(沙盒目录, 只做演练,
+  # 不带 --config 时走默认值: 输入 = 最终语料 v3(同上), 输出 = datasets/(沙盒目录, 只做演练,
   # 不会碰 datasets_v3_20260927 里的最终产出; 生产请用 run_config_v3.json)
   python -m file_processor.main
 
   # 指定具体文件 / 只输出部分数据集 / 指定输出目录与并发
-  #   注意: 不带 --config 就是默认参数(输入目录仍是 data/ 下 8 个初版目录, --files 只覆盖"处理哪些文件"),
-  #   与 run_config_v3.json 无关; 想让指定文件也套用 v3 参数, 两个参数一起给
+  #   注意: 不带 --config 就是默认参数(输入 = 默认的最终语料 v3, --files 只覆盖"处理哪些文件"),
+  #   与 run_config_v3.json 的差别在其余参数(输出目录 / 评分阈值 / 并发路数等);
+  #   想让指定文件也套用 v3 的全部参数, 两个参数一起给
   python -m file_processor.main --files doc1.pdf,doc2.docx --output-types pretrain
   python -m file_processor.main --files doc1.pdf,doc2.docx --output-dir demo_out --max-workers 2
   python -m file_processor.main --config file_processor/run_config_v3.json --files data/爬取语料_v3/txt/某份.txt
 
-  # 换模型: provider 默认 deepseek(deepseek-flash); 需要更强推理可换 deepseek-v4-pro;
-  #         百炼欠费后文本链已切 DeepSeek, 传 dashscope 仅作回退
-  python -m file_processor.main --llm --llm-provider deepseek --llm-model deepseek-v4-pro
+  # 换模型: 文本链只支持 deepseek, 默认 deepseek-flash; 需更强推理可换 deepseek-v4-pro
+  python -m file_processor.main --llm --llm-model deepseek-v4-pro
 
   # 无凭据时跑结构链路(跳过质量评分): 加 --no-quality
   python -m file_processor.main --config file_processor/run_config_v3.json --no-quality
 
 产出: <output_dir>/{pretrain,instruction,cot}/data.jsonl + metadata.json,
       以及 run_report.json / rejected.jsonl / review_output*.jsonl(争议样本待人工审核清单)
+
+说明:
+  - 截图 / 扫描 PDF 由读取层自动走 OCR(qwen-vl-plus), 没有单独的 OCR 配置 —— 用 --files 指定
+    这类文件即可; 已读取过的文件命中 .cache/read_cache.jsonl 时不再调用 OCR。
+  - COT 四类分布只统计、只报告, 不裁剪也不改判; 差额只能在素材层解决。
 """
 
 import argparse
