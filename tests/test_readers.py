@@ -209,6 +209,7 @@ class ReaderDispatchTest(unittest.TestCase):
     def setUp(self):
         self._tmp = workspace_tempdir()
         config = ProcessorConfig()
+        config.enable_llm = False             # 默认已开, 读取用例不需要生成
         config.input_dirs = {"txt": self._tmp}
         config.output_dir = os.path.join(self._tmp, "out")
         config.cache_dir = os.path.join(self._tmp, "cache")

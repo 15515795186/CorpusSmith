@@ -51,6 +51,7 @@ class PipelineEndToEndTest(unittest.TestCase):
         self._write(os.path.join(self.html_dir, "page.html"), HTML_DOC)
 
         self.config = ProcessorConfig()
+        self.config.enable_llm = False        # 端到端用例只跑结构链路, 不碰真 API
         self.config.input_dirs = {"txt": self.txt_dir, "html_source": self.html_dir}
         self.config.output_dir = self.out_dir
         self.config.cache_dir = os.path.join(root, "cache")
@@ -239,6 +240,7 @@ class QualityApiErrorTest(unittest.TestCase):
         with open(os.path.join(txt_dir, "a.txt"), "w", encoding="utf-8") as f:
             f.write(TXT_A)
         config = ProcessorConfig()
+        config.enable_llm = False             # 不碰真 API
         config.input_dirs = {"txt": txt_dir}
         config.output_dir = os.path.join(tmp, "out")
         config.cache_dir = os.path.join(tmp, "cache")
@@ -337,6 +339,7 @@ class QualityExemptionTest(unittest.TestCase):
             with open(os.path.join(txt_dir, name), "w", encoding="utf-8") as f:
                 f.write(body)
         config = ProcessorConfig()
+        config.enable_llm = False             # 不碰真 API
         config.input_dirs = {"txt": txt_dir}
         config.output_dir = os.path.join(tmp, "out")
         config.cache_dir = os.path.join(tmp, "cache")

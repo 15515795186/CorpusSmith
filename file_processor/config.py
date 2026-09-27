@@ -26,7 +26,7 @@ class ProcessorConfig:
         "txt": "data/爬取语料_v3/txt",
     })
     files: Optional[list] = None
-    output_dir: str = "datasets"
+    output_dir: str = "datasets_v3_20260927"
     output_prefix: str = ""
 
     # ========== OCR（Qwen-VL API）==========
@@ -52,7 +52,7 @@ class ProcessorConfig:
     chunk_overlap: int = 128
 
     # ========== LLM 生成（可选）==========
-    enable_llm: bool = False
+    enable_llm: bool = True
     # 文本 LLM: 走 DeepSeek 官方 OpenAI 兼容端点(百炼欠费后文本链已全量切换)
     llm_provider: str = "deepseek"          # 文本链供应商标识(当前仅 deepseek)
     deepseek_api_key: str = ""
@@ -63,9 +63,9 @@ class ProcessorConfig:
     llm_cot_model: str = ""                # COT 转换器专用模型; 留空则与主模型共用
     llm_cot_max_tokens: int = 0            # COT 专用输出上限; 0 = 跟随 llm_max_tokens(deepseek-r1 思考链偏长, 建议 3000-4000)
     llm_max_attempts: int = 3              # 拒绝采样(失败重试制): LLM 生成后硬校验不过则重试的上限; 1=不重试
-    llm_max_concurrency: int = 3
+    llm_max_concurrency: int = 8
     llm_temperature: float = 0.3
-    llm_max_tokens: int = 3072            # DeepSeek 为推理型模型, 思考 token 也计入上限, 预算过小会把可见输出挤空
+    llm_max_tokens: int = 4096            # DeepSeek 为推理型模型, 思考 token 也计入上限, 预算过小会把可见输出挤空
 
     # ========== 样本级校验(转换后,从严) ==========
     # COT 四类分布: 只统计、只报告, 不裁剪也不改判(实事求是 —— 差额只能在素材层解决)。
@@ -73,13 +73,13 @@ class ProcessorConfig:
     cot_distribution_tolerance: float = 0.05
     sample_check_ratio: float = 0.1           # 转换后 LLM 语义抽检比例(0=关闭; 抽检幻觉/跳步/类别匹配)
     verify_code_exec: bool = False            # 代码题运行验证(有安全门槛, 默认关)
-    review_output: str = ""                   # 争议/未决样本导出路径(JSONL, 供人工双人审核); 空=仅记日志
+    review_output: str = ""                 # 争议样本清单: 留空则跟随 output_dir(见 review_output_path)                   # 争议/未决样本导出路径(JSONL, 供人工双人审核); 空=仅记日志
 
     # ========== LLM 质量评分 ==========
     quality_enabled: bool = True
     quality_model: str = ""                # 留空 = 跟随当前 provider 的主模型
     quality_min_per_dimension: int = 3
-    quality_min_total: int = 20
+    quality_min_total: int = 18
     # 人工豁免名单: 质检淘汰、但经人工复核判定应保留的来源(典型: "结尾自然收束"
     # 判据误伤节选型来源)。JSON 结构 {"sources": [{"source": "<文件名>", "reason": "...",
     # "scores": {...}}]}; 命中的来源即使质检未过也放行, 但逐条留证(quality_exempted.jsonl
@@ -105,7 +105,7 @@ class ProcessorConfig:
         "instruction": 0,
         "cot": 0,
     })
-    resume: bool = False           # True: 不截断输出，跳过已写入的来源文件
+    resume: bool = True           # True: 不截断输出，跳过已写入的来源文件
     save_rejected: bool = True     # 保存被过滤/淘汰的文本，便于诊断阈值
     rejected_max_chars: int = 5000
 
@@ -171,6 +171,13 @@ class ProcessorConfig:
     def cot_model(self) -> str:
         """COT 专用模型(llm_cot_model 留空则跟随主模型)"""
         return self.llm_cot_model or self.llm_model()
+
+    def review_output_path(self, cot: bool = False) -> str:
+        """争议样本清单路径: 配置留空时跟随 output_dir(COT 单独一个文件)"""
+        if self.review_output:
+            return self.review_output
+        name = "review_output_cot.jsonl" if cot else "review_output.jsonl"
+        return os.path.join(self.output_dir, name)
 
     def quality_model_resolved(self) -> str:
         """质量评分模型: 配置留空时跟随文本链主模型"""

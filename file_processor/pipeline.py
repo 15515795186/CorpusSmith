@@ -141,7 +141,7 @@ class FileProcessorPipeline:
             max_samples=config.max_samples.get("instruction", 0),
             llm_generator=self.llm_generator if config.enable_llm else None,
             sample_check_ratio=config.sample_check_ratio,
-            review_output=config.review_output,
+            review_output=config.review_output_path(),
             verify_code_exec=config.verify_code_exec,
             llm_max_attempts=config.llm_max_attempts,
         )
@@ -150,7 +150,7 @@ class FileProcessorPipeline:
             llm_generator=self.cot_llm_generator if config.enable_llm else None,
             sample_check_ratio=config.sample_check_ratio,
             distribution_tolerance=config.cot_distribution_tolerance,
-            review_output=config.review_output,
+            review_output=config.review_output_path(cot=True),
             verify_code_exec=config.verify_code_exec,
             llm_max_attempts=config.llm_max_attempts,
         )

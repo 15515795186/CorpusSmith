@@ -67,7 +67,7 @@ class ConfigTest(unittest.TestCase):
         self.assertTrue(config.input_dirs, "默认输入目录不应为空")
         for key, path in config.input_dirs.items():
             self.assertTrue(path.startswith("data/"), f"{key} 默认路径应为 data/ 下: {path}")
-        self.assertEqual(config.output_dir, "datasets")
+        self.assertEqual(config.output_dir, "datasets_v3_20260927")   # 默认输出 = 最终产出目录
 
     def test_from_json_ignores_unknown_keys(self):
         tmp = workspace_tempdir()
@@ -168,3 +168,29 @@ class ConfigTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class DefaultsAreProductionTest(unittest.TestCase):
+    """默认参数就是 v3 生产配置 —— 裸跑即生产跑, 不需要挂 --config"""
+
+    def test_defaults_match_run_config_v3(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, "file_processor", "run_config_v3.json"), encoding="utf-8") as f:
+            prod = json.load(f)
+        config = ProcessorConfig()
+        actual = config.to_dict()
+        for key, want in prod.items():
+            if key == "review_output":
+                # 默认留空 = 跟随 output_dir, 解析后应与 v3 的显式值一致
+                self.assertEqual(os.path.normpath(config.review_output_path()),
+                                 os.path.normpath(want), key)
+                continue
+            self.assertEqual(actual.get(key), want, "默认值与 v3 配置不一致: %s" % key)
+
+    def test_default_review_output_follows_output_dir(self):
+        c = ProcessorConfig(output_dir="demo_out")
+        self.assertEqual(c.review_output_path(), os.path.join("demo_out", "review_output.jsonl"))
+        self.assertEqual(c.review_output_path(cot=True),
+                         os.path.join("demo_out", "review_output_cot.jsonl"))
+        c.review_output = "explicit.jsonl"
+        self.assertEqual(c.review_output_path(), "explicit.jsonl")
+        self.assertEqual(c.review_output_path(cot=True), "explicit.jsonl")

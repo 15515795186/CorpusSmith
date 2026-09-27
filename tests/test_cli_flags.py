@@ -20,10 +20,11 @@ def _config(*argv):
 
 class ResumeRebuildFlagTest(unittest.TestCase):
 
-    def test_default_is_rebuild(self):
-        """默认(无配置无开关)是重建语义"""
-        self.assertFalse(_config().resume)
-        self.assertEqual(_config().output_dir, "datasets")   # 默认写沙盒目录, 不碰最终产出
+    def test_default_is_production_resume(self):
+        """默认参数 = v3 生产配置: resume=true(只补不覆盖), 输出 = 最终产出目录"""
+        cfg = _config()
+        self.assertTrue(cfg.resume)
+        self.assertEqual(cfg.output_dir, "datasets_v3_20260927")
 
     def test_resume_flag(self):
         self.assertTrue(_config("--resume").resume)

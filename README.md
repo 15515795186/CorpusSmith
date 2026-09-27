@@ -104,30 +104,31 @@ setx DEEPSEEK_API_KEY "sk-xxx"             # 优先级：真实环境变量 > .e
 # 3. 先看配置与待处理文件（不写任何文件）
 python -m file_processor.main --dry-run
 
-# 4. 生产入口: 全流程（项目最终语料 8 类 × 3 = 24 份 → pretrain / instruction / cot）
-python -m file_processor.main --config file_processor/run_config_v3.json
+# 4. 直接跑生产（默认参数就是 v3 最终配置：最终语料 24 份 → pretrain / instruction / cot）
+python -m file_processor.main
 
 # 5. 只跑 COT（以既有 SFT 问答对为素材: 判类 → 回原文搜据 → 写规范字段）
 python -m file_processor.main --config file_processor/run_config_cot_sft.json
 
-# 6. 清空重建（配置里 resume=true 时用它显式覆盖; 不加则按配置走续跑/重建）
-python -m file_processor.main --config file_processor/run_config_v3.json --rebuild
+# 6. 清空重建（默认 resume=true 只补不覆盖, 与最终配置一致）
+python -m file_processor.main --rebuild
 
-# 7. 中断后接着跑（已处理来源在读/评/写之前就跳过; 质检被限流淘汰的会自动重试）
-python -m file_processor.main --config file_processor/run_config_v3.json --resume
-
+# 7. 查看进度
 # 8. 查看进度
 python check_progress.py
 ```
 
 **入口与输出目录**
 
-- 不带 `--config` 走 `config.py` 默认值：输入 = **项目最终语料** `data/爬取语料_v3`（8 类 × 3 = 24 份），
-  输出 = **沙盒目录** `datasets/` —— 只做演练，**不会碰 `datasets_v3_20260927/` 里的最终产出**。
-- 最终产出（pretrain 237 / instruction 165 / cot 51）只由 `run_config_v3.json` 写入；
-  只想重跑 COT 用 `run_config_cot_sft.json`。
+- **不带任何参数 = 生产运行**：输入 = 项目最终语料 `data/爬取语料_v3`（8 类 × 3 = 24 份），
+  输出 = `datasets_v3_20260927/`，`resume=true`（只补不覆盖；要清空重建加 `--rebuild`）。
+- `ProcessorConfig()` 的默认值**就是 v3 最终配置**（逐键与 `run_config_v3.json` 一致，有单测锁定），
+  所以日常不需要挂 `--config`。
+- 演练 / 试跑请显式换输出目录：`--output-dir demo_out`（默认输出目录就是最终产出目录）。
+- 只想重跑 COT 用 `--config file_processor/run_config_cot_sft.json`（以既有 SFT 问答对为素材）。
 - 初版 400 份与 v2 语料已删除（曾是测试用例），`run_config.json` / `run_config_v2.json` /
   `run_config_ocr.json` 随之移除。
+
 
 ---
 
