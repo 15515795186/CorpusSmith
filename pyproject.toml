@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "llm-data-workflow"
+name = "corpus-smith"
 version = "0.1.0"
 description = "批量多格式文档 → 清洗去重 → LLM 质量评分 → pretrain/SFT/COT 数据集"
 readme = "README.md"
@@ -34,7 +34,7 @@ pipeline = ["requests>=2.31", "Pillow>=10.0"]
 dev = ["ruff>=0.6", "mypy>=1.10"]
 
 [project.scripts]
-llm-data-workflow = "file_processor.main:main"
+corpus-smith = "file_processor.main:main"
 
 [tool.setuptools.packages.find]
 include = ["file_processor*"]

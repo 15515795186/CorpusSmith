@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-LLM 数据集处理工作流入口
+CorpusSmith —— LLM 数据集处理工作流入口
 批量读取多格式文件 → 清洗 → 过滤(启发式 + PPL 异常闸) → 质量评分 → 转换为 3 种 LLM 训练数据集
 
 前置: 项目根 `.env` 填模型凭据(已被 gitignore)

@@ -1,6 +1,6 @@
-# LLM 数据集处理工作流
+# CorpusSmith
 
-批量读取多格式文档（PDF / Word / HTML / TXT / PNG），经 **解析 / OCR → 清洗去重 → LLM 质量评分**，
+LLM 数据集处理工作流 —— 批量读取多格式文档（PDF / Word / HTML / TXT / PNG），经 **解析 / OCR → 清洗去重 → LLM 质量评分**，
 转换为 **3 种大模型训练数据集**：预训练（pretrain）、指令微调（SFT）、Chain-of-Thought（COT）。
 
 ---
@@ -44,7 +44,7 @@ python -m file_processor.main --dry-run    # 只看配置与待处理文件数
 ## 目录结构
 
 ```
-LLM_Data_Test/
+CorpusSmith/
 ├── file_processor/                  # 核心处理包（34 个 py / 约 6000 行，结构见图后导航）
 │   ├── README.md                    # ★ 包内总览：数据流、依赖表、根文件逐个说明
 │   ├── main.py                      # CLI 入口
