@@ -3,7 +3,7 @@ PDF 文件读取器
 - 文字PDF: 使用 pymupdf（回退 pypdf）直接提取
 - 扫描/图片PDF: 渲染页面后通过 Qwen-VL API 逐页 OCR
 
-说明：本地 baidu/Unlimited-OCR 方案已废弃（见 _archive/），
+说明：本地 baidu/Unlimited-OCR 方案已废弃并移除（相关脚本已删除），
 本项目统一走 DashScope Qwen-VL；未配置 API key 时扫描版 PDF 会明确报错，
 而不是静默尝试加载本地模型。
 """

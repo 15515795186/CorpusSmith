@@ -10,9 +10,27 @@ env/
 .idea/
 .vscode/
 .jbeval/
+.workbuddy/
 
-# ---- 数据与产出（体积大，可由 data/_pipeline 重建）----
-data/
+# ---- 数据与产出（体积大，可重建）----
+# 白名单策略：仅显式保留已入库的重建脚本与清单；原始语料、草稿、缓存一律忽略。
+# 注意：父目录被 `dir/` 排除时无法再用 `!` 反选子项，故必须写 `data/*` 而非 `data/`。
+# 如需新增重建脚本入库，在下方追加对应 `!data/_pipeline/<文件名>` 即可。
+data/*
+!data/README.md
+!data/_pipeline/
+data/_pipeline/*
+!data/_pipeline/PPL扫码留档.md
+!data/_pipeline/manifest_v3.json
+!data/_pipeline/ppl_scan_scores.json
+!data/_pipeline/ppl_scan_scores_full80.json
+!data/_pipeline/ppl_scan_summary.json
+!data/_pipeline/ppl_scan_with_length.json
+!data/_pipeline/rebuild_scan_en_pdf.py
+!data/_pipeline/scan_en_verify.json
+!data/_pipeline/scan_ppl_distribution.py
+!data/_pipeline/人工豁免_结尾判据.json
+!data/_pipeline/并发实测留档.md
 datasets*/
 .cache/
 ocr_temp/
@@ -30,6 +48,27 @@ test_err.txt
 
 # ---- 密钥/本地配置 ----
 .env
+.env.*
 *.env
+!.env.example
 *.local.json
 run_quality_score.local.py
+
+# ---- Python 工具缓存 ----
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+.tox/
+
+# ---- 构建产物 ----
+build/
+dist/
+
+# ---- 操作系统生成文件 ----
+Thumbs.db
+Thumbs.db:encryptable
+desktop.ini
+.DS_Store
