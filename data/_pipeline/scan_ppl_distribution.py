@@ -6,11 +6,11 @@
     OCR 结果缓存到 ocr_cache/, 重跑复用, 不重复消耗 API
 
 用法:
-  D:/Anaconda3/envs/Unlimited-OCR/python.exe data/_pipeline/scan_ppl_distribution.py
+  python data/_pipeline/scan_ppl_distribution.py
   可选: --no-ocr    只跑有文字层的语料(原行为, 70 份)
         --only-ocr  只跑需要 OCR 的语料(30 份, 走缓存)
 环境要求:
-  HUGGINGFACE_HUB_CACHE=D:/model(PPL 模型缓存根)
+  HUGGINGFACE_HUB_CACHE=<PPL 模型缓存根>(可选; 未设置则用 HF 默认缓存)
   DASHSCOPE_API_KEY(OCR 用, 自动从项目 .env 读取)
 
 输出:
@@ -32,7 +32,9 @@ from collections import defaultdict
 _PKG_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, _PKG_ROOT)
 
-os.environ.setdefault("HUGGINGFACE_HUB_CACHE", "D:/model")
+# PPL 模型缓存根: 优先 PPL_CACHE_DIR / HUGGINGFACE_HUB_CACHE 环境变量; 均未设置则用 HF 默认缓存
+if os.environ.get("PPL_CACHE_DIR"):
+    os.environ.setdefault("HUGGINGFACE_HUB_CACHE", os.environ["PPL_CACHE_DIR"])
 
 from file_processor.cleaners.ppl_filter import PPLFilter  # noqa: E402
 from file_processor.cleaners.text_cleaner import TextCleaner  # noqa: E402

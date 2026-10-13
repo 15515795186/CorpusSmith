@@ -93,7 +93,9 @@ class ProcessorConfig:
     ppl_threshold: float = 25.0          # **极端异常闸**: 只拦机器翻译腔/乱码级异常(全量 80 份实测零淘汰);
                                          # 不用分位阈值 —— q95(16.94) 会连正常语料一起切(含新爬英文正文页/政务清单/规划), 见 data/_pipeline/PPL扫码留档.md; 0 = 扫码模式(只统计不淘汰)
     ppl_quantile: float = 0.95           # 仅扫码模式(标定/统计)使用; 生产阈值已改为上面的绝对异常闸, 不再按分位淘汰
-    ppl_cache_dir: str = "D:/model"      # PPL 模型缓存根(与 data/_pipeline/scan_ppl_distribution.py 同源); 留空 = 跟随 HUGGINGFACE_HUB_CACHE/默认缓存
+    ppl_cache_dir: str = ""              # PPL 模型缓存根; 留空 = 跟随 HUGGINGFACE_HUB_CACHE/默认缓存
+                                         # (默认值原为本机绝对路径 D:/model, 已移除以保证跨机器可移植;
+                                         #  如需指定, 在本地 config JSON 中显式设置)
 
     # ========== 并发 ==========
     max_workers: int = 4

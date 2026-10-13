@@ -30,7 +30,7 @@
   "quality_min_total": 18,
   "enable_ppl_filter": false,
   "ppl_threshold": 25.0,
-  "ppl_cache_dir": "D:/model",
+  "ppl_cache_dir": "",
   "min_text_length": 30,
   "max_text_length": 1000000,
   "chunk_size": 1024,
