@@ -3,8 +3,7 @@
 """
 
 from collections import Counter
-from typing import List, Dict
-from .lang_detect import detect_language, estimate_token_count
+from typing import List
 
 
 class StatsCollector:
@@ -43,7 +42,7 @@ class StatsCollector:
         print("[Stats] 处理统计报告")
         print("=" * 60)
         print(f"  发现文件总数:      {self.total_files}")
-        print(f"  按类型:")
+        print("  按类型:")
         for ft, cnt in self.files_by_type.most_common():
             print(f"    - {ft}: {cnt}")
         print(f"  成功处理:          {self.files_processed}")
@@ -56,7 +55,7 @@ class StatsCollector:
         print(f"  去重移除:          {self.duplicates_removed}")
         print(f"  预计总 Token 数:    {self.total_tokens_est:,}")
         print(f"  语言分布:          {dict(self.language_dist.most_common())}")
-        print(f"  ----")
+        print("  ----")
         print(f"  预训练样本数:      {self.pretrain_samples}")
         print(f"  指令微调样本数:    {self.instruction_samples}")
         print(f"  COT 样本数:        {self.cot_samples}")

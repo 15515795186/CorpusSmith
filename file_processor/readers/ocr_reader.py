@@ -8,7 +8,6 @@ import logging
 import mimetypes
 import os
 import time
-from typing import Optional
 
 from .base import BaseReader, ReaderResult
 

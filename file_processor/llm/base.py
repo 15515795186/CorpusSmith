@@ -3,7 +3,6 @@ LLM 生成器基类
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional
 
 
 class BaseLLMGenerator(ABC):

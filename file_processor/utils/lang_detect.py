@@ -4,7 +4,6 @@
 """
 
 import re
-from typing import Optional
 
 
 def detect_language(text: str) -> str:
@@ -13,7 +12,6 @@ def detect_language(text: str) -> str:
         return "unknown"
 
     sample = text[:2000]
-    total_chars = len(sample.strip())
 
     # 统计中文字符
     zh_chars = len(re.findall(r'[一-鿿]', sample))

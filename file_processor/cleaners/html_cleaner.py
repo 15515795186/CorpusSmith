@@ -7,7 +7,6 @@ BeautifulSoup 解析发生在读取层，不在这里。
 """
 
 import re
-from typing import Optional
 
 
 class HTMLCleaner:

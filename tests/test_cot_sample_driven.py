@@ -8,7 +8,6 @@
 """
 import json
 import os
-import re
 import unittest
 
 from file_processor.config import ProcessorConfig

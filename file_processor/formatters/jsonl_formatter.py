@@ -24,7 +24,7 @@ import json
 import logging
 import os
 import re
-from typing import Any, Dict, Iterable, List, Optional, Set
+from typing import Any, Dict, Iterable, List, Set
 
 from ..utils.lang_detect import detect_language
 

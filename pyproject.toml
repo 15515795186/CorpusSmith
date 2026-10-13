@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm-data-workflow"
+version = "0.1.0"
+description = "批量多格式文档 → 清洗去重 → LLM 质量评分 → pretrain/SFT/COT 数据集"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "Qmm", email = "1746230746@qq.com" }]
+keywords = ["llm", "dataset", "data-cleaning", "ocr", "instruction-tuning", "cot"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+dependencies = [
+  "pymupdf>=1.24",
+  "pypdf>=4.0",
+  "beautifulsoup4>=4.12",
+  "lxml>=5.0",
+  "python-docx>=1.1",
+  "dashscope>=1.20",
+  "chardet>=5.0",
+  "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+# 数据采集/构建工具链（data/_pipeline，仅在重建数据时需要）
+pipeline = ["requests>=2.31", "Pillow>=10.0"]
+# 开发工具
+dev = ["ruff>=0.6", "mypy>=1.10"]
+
+[project.scripts]
+llm-data-workflow = "file_processor.main:main"
+
+[tool.setuptools.packages.find]
+include = ["file_processor*"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+# 只对源码与测试做静态检查；data/ 下多为本机采集脚本与生成物
+extend-exclude = ["data", "datasets", ".workbuddy"]
+
+[tool.ruff.lint]
+# 起步阶段只启用"真问题"规则：语法级错误(E9) + pyflakes(F：未定义名 / 未用导入 / 未用变量)。
+# 暂不启用 E402（项目在 sys.path 调整后再导入属有意为之）与 E741；
+# 后续可逐步扩展 I(isort) / UP(pyupgrade) / B(bugbear)。
+select = ["E9", "F"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["file_processor"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true

@@ -6,7 +6,7 @@
 import os
 import re
 import logging
-from typing import List, Dict, Optional
+from typing import List, Dict
 
 from ..utils.lang_detect import detect_language, estimate_token_count
 from ..readers.base import ReaderResult

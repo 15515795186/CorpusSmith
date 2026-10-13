@@ -1,6 +1,5 @@
 import json
 import os
-import re
 import unittest
 
 from file_processor.converters.pretrain_converter import PretrainConverter

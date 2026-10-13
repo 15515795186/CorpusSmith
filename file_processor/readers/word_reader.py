@@ -5,7 +5,6 @@ Word (.docx) 文件读取器
 
 import os
 import logging
-from typing import List
 
 from .base import BaseReader, ReaderResult
 

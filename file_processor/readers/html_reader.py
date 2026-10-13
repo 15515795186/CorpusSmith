@@ -180,8 +180,6 @@ class HTMLReader(BaseReader):
 
         # 移除所有class和id属性（保留文本）
         for tag in soup.find_all(True):
-            attrs_to_remove = ['class', 'id', 'style', 'onclick', 'onload',
-                               'onmouseover', 'onmouseout', 'data-*']
             for attr in list(tag.attrs.keys()):
                 if attr.startswith('on') or attr in ['class', 'id', 'style',
                                                       'data-src', 'data-id']:

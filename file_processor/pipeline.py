@@ -18,7 +18,7 @@ import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from .config import ProcessorConfig
 from .readers.base import ReaderResult
@@ -874,40 +874,6 @@ class FileProcessorPipeline:
         with self._write_lock:
             return len(samples), self.formatter.write_batch(name, samples)
 
-        if total_generated != total_samples:
-            logger.info("[Output] [%s] 跳过与数据集中已有记录完全相同的样本 %d 条",
-                        name, total_generated - total_samples)
-
-        if name == "pretrain":
-            self.stats.pretrain_samples = total_samples
-        elif name == "instruction":
-            self.stats.instruction_samples = total_samples
-        elif name == "cot":
-            self.stats.cot_samples = total_samples
-
-        output_path = self.formatter.get_path(name)
-        # sources = 累计口径（resume 时本次可能只有个位数来源，若直接写本次值
-        # 会把 metadata 里历史的 244+ 覆盖掉）；本次新增另记 sources_this_run
-        self.formatter.write_metadata(
-            name,
-            sources=len(self.formatter.read_sources(name)),
-            sources_this_run=written_sources,
-            generated_at=datetime.now().isoformat(timespec="seconds"),
-            elapsed_seconds=round(time.time() - self._t0, 1),
-            config={
-                "chunk_size": self.config.chunk_size,
-                "chunk_overlap": self.config.chunk_overlap,
-                "enable_llm": self.config.enable_llm,
-                "quality_enabled": self.quality_scorer is not None,
-                "quality_api_errors": self.stats.quality_api_errors,
-            "quality_exempted": self.stats.quality_exempted,
-            "quality_exempted_path": os.path.basename(self.quality_exempted_path),
-                "quality_api_error_path": os.path.basename(self.quality_api_error_path),
-                "resume": self.config.resume,
-            },
-        )
-        logger.info("[Output] [%s] %d records (%d sources) -> %s",
-                    name, total_samples, written_sources, output_path)
 
     # ================= 报告 =================
     def _record_rejection(self, source: str, stage: str, reason: str, text: str = ""):
