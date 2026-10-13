@@ -26,13 +26,13 @@ HTML 复杂度最低值：约 296 KB、957 个元素、109 个链接、60 个段
 重建命令：
 
 ```powershell
-E:\Shenduxuexi\ProgramData\Anaconda_envs\envs\langchain1.2\python.exe _pipeline\build_independent_chinese_dataset.py
+python _pipeline\build_independent_chinese_dataset.py
 ```
 
 四类数据已经存在时，采集器只会替换其自身记录过的文件：
 
 ```powershell
-E:\Shenduxuexi\ProgramData\Anaconda_envs\envs\langchain1.2\python.exe _pipeline\build_independent_chinese_dataset.py --force
+python _pipeline\build_independent_chinese_dataset.py --force
 ```
 
 ## 已有：大模型领域 PDF 数据集（英文 100 篇 + 中文 100 篇）

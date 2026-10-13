@@ -1,6 +1,6 @@
 # LLM 数据集处理工作流
 
-批量读取 400 份多格式文档（PDF / Word / HTML / TXT / PNG），经 **解析 / OCR → 清洗去重 → LLM 质量评分**，
+批量读取多格式文档（PDF / Word / HTML / TXT / PNG），经 **解析 / OCR → 清洗去重 → LLM 质量评分**，
 转换为 **3 种大模型训练数据集**：预训练（pretrain）、指令微调（SFT）、Chain-of-Thought（COT）。
 
 ---
@@ -15,7 +15,29 @@
 | 可诊断 | 被丢弃文本写入 `rejected.jsonl` 并统计原因，便于定位阈值/OCR 质量问题 |
 | 确定性产出 | 每次运行生成 `run_report.json`（文件数、缓存命中、丢弃原因、数据集规模、脱敏配置） |
 | 凭据安全 | 项目根 `.env` 自动加载（gitignore 覆盖），真实环境变量优先；key 永不写入代码/仓库/注册表 |
-| 无外部依赖测试 | 116 个单元 + 端到端测试（标准库 unittest），不需要 API key |
+| 无外部依赖测试 | 单元与端到端测试 200+ 个（标准库 unittest），不需要 API key |
+
+---
+
+## 快速开始
+
+**环境要求**：Python 3.10+（开发于 3.12）；依赖见 `requirements.txt`。
+
+```bash
+# 1) 安装依赖
+python -m pip install -r requirements.txt
+
+# 2) 配置凭据（可选：仅 LLM 生成 / 质量评分 / OCR 需要）
+cp .env.example .env          # Windows PowerShell: Copy-Item .env.example .env
+# 编辑 .env 填入 DEEPSEEK_API_KEY（文本链）与 DASHSCOPE_API_KEY（OCR 视觉链）
+
+# 3) 运行（默认读取 data/爬取语料，输出到 datasets/）
+python -m file_processor.main              # 完整流程
+python -m file_processor.main --no-quality # 无凭据时只跑结构链路
+python -m file_processor.main --dry-run    # 只看配置与待处理文件数
+```
+
+> 语料数据不入库：首次使用需自备语料，或按 `data/README.md` 重建。
 
 ---
 
@@ -23,7 +45,7 @@
 
 ```
 LLM_Data_Test/
-├── file_processor/                  # 核心处理包（32 个 py / 4268 行，结构见图后导航）
+├── file_processor/                  # 核心处理包（34 个 py / 约 6000 行，结构见图后导航）
 │   ├── README.md                    # ★ 包内总览：数据流、依赖表、根文件逐个说明
 │   ├── main.py                      # CLI 入口
 │   ├── pipeline.py                  # 管道编排：扫描→读取→清洗→质检→转换→输出
@@ -37,23 +59,10 @@ LLM_Data_Test/
 │   ├── formatters/jsonl_formatter.py# 输出布局 + 重建/续跑/元数据（README）
 │   ├── llm/                         # 可选：dashscope 生成器（README）
 │   └── utils/                       # lang_detect / dedup / stats / cache（README）
-├── data/                            # 原始数据 + 数据构建工具链（详见 data/README.md）
-│   ├── 爬取语料/                 ★ 项目最终输入：8 类 × 3 = 24 份（见下方说明）
-│   ├── 爬取语料_v2/                 第二版（40 份，备用/测试）
-│   ├── 爬取语料/                    初版（80 份，测试用例）
-│   ├── 文本pdf/                     50 篇英文论文 PDF（文字层，初版测试语料）
-│   ├── 文本pdf中文版/                50 篇中文论文 PDF（文字层）
-│   ├── 版式pdf/                     50 篇英文扫描版 PDF（需 OCR）
-│   ├── 版式pdf中文版/                50 篇中文扫描版 PDF（需 OCR）
-│   ├── word/                       50 份政务/高校 DOCX
-│   ├── 源码html/                    50 个维基法律页面 HTML
-│   ├── 截图html/                    50 张页面截图 PNG（需 OCR）
-│   ├── txt/                        50 篇政府白皮书 TXT
-│   ├── tech_output/                数据构建暂存区
-│   ├── 爬取语料/                    初版爬取语料（80 份）
-│   ├── 爬取语料_v2/                 第二版（40 份，备用）
-│   ├── 爬取语料/                 第三版（8 类 × 3 = 24 份，当前主用；清单见 data/_pipeline/manifest_v3.json）
-│   └── _pipeline/                  采集/生成/校验脚本（重建数据时使用）
+├── data/                            # 原始数据 + 数据构建工具链（详见 data/README.md；数据不入库）
+│   ├── 爬取语料/                    ★ 项目最终输入：8 类 × 3 = 24 份
+│   │     （txt / word / 截图html / 源码html / 文本pdf中英文版 / 版式pdf中英文版）
+│   └── _pipeline/                   采集/生成/校验脚本与清单（重建数据时使用）
 ├── datasets/            # 当前产出（pretrain 237 / instruction 165 / cot 51；目录名由 output_dir 配置）
 ├── tests/                           # 单元与端到端测试
 ├── check_progress.py                # 进度查看：输入量 / 产出 / 缓存 / 报告 / 日志（自动选最新 ocr_run*.log）
