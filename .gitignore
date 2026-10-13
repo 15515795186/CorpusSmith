@@ -31,6 +31,8 @@ data/_pipeline/*
 !data/_pipeline/scan_ppl_distribution.py
 !data/_pipeline/人工豁免_结尾判据.json
 !data/_pipeline/并发实测留档.md
+# 数据重建主脚本（data/README.md 记录的重建命令依赖它）
+!data/_pipeline/build_independent_chinese_dataset.py
 datasets*/
 .cache/
 ocr_temp/
