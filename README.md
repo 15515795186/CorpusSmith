@@ -1,7 +1,11 @@
 # CorpusSmith
 
-LLM 数据集处理工作流 —— 批量读取多格式文档（PDF / Word / HTML / TXT / PNG），经 **解析 / OCR → 清洗去重 → LLM 质量评分**，
+**把多格式文档锻造为 LLM 训练数据集：解析 / OCR → 清洗去重 → PPL + LLM 质量评分 → 输出 pretrain / SFT / COT。**
+
+批量读取多格式文档（PDF / Word / HTML / TXT / PNG），经 **解析 / OCR → 清洗去重 → LLM 质量评分**，
 转换为 **3 种大模型训练数据集**：预训练（pretrain）、指令微调（SFT）、Chain-of-Thought（COT）。
+
+> **Topics**：`llm` · `dataset` · `data-cleaning` · `dedup` · `ocr` · `instruction-tuning` · `sft` · `chain-of-thought` · `pretraining` · `corpus` · `python` · `qwen-vl` · `deepseek`
 
 ---
 
