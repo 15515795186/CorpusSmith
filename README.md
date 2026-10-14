@@ -4,6 +4,8 @@
 [![Release](https://img.shields.io/github/v/release/15515795186/CorpusSmith)](https://github.com/15515795186/CorpusSmith/releases/latest)
 [![License](https://img.shields.io/github/license/15515795186/CorpusSmith)](https://github.com/15515795186/CorpusSmith/blob/main/LICENSE)
 
+[English](README.en.md) | 简体中文
+
 **把多格式文档锻造为 LLM 训练数据集：解析 / OCR → 清洗去重 → PPL + LLM 质量评分 → 输出 pretrain / SFT / COT。**
 
 批量读取多格式文档（PDF / Word / HTML / TXT / PNG），经 **解析 / OCR → 清洗去重 → LLM 质量评分**，
@@ -78,8 +80,10 @@ CorpusSmith/
 ├── rebuild_derived.py               # 转换器改动后从读取缓存免费重建 instruction/cot（不动 pretrain/质检结论，零 API）
 ├── run_quality_score.py             # 对已有数据集重新评分（独立口径，不破坏原文件）
 ├── .env.example                     # 凭据模板（复制为 .env 填 key；.env 已被 gitignore）
+├── BENCHMARK.md                     # 实测数据、口径说明与已知限制
 ├── requirements.txt
-└── README.md
+├── README.md
+└── README.en.md                     # 英文版说明
 ```
 
 ### 模块实现细节导航
@@ -172,6 +176,8 @@ python check_progress.py
 ---
 
 ## 实测规模（400 文件全量，LLM 质检开启）
+
+> 完整口径说明、批次明细与已知限制见 **[BENCHMARK.md](BENCHMARK.md)**；本节为摘要。
 
 ### 批次 A：250 文件（文本 PDF / Word / 源码 HTML / 截图无关项 / TXT）
 
