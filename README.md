@@ -1,5 +1,9 @@
 # CorpusSmith
 
+[![CI](https://github.com/15515795186/CorpusSmith/actions/workflows/ci.yml/badge.svg)](https://github.com/15515795186/CorpusSmith/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/15515795186/CorpusSmith)](https://github.com/15515795186/CorpusSmith/releases/latest)
+[![License](https://img.shields.io/github/license/15515795186/CorpusSmith)](https://github.com/15515795186/CorpusSmith/blob/main/LICENSE)
+
 **把多格式文档锻造为 LLM 训练数据集：解析 / OCR → 清洗去重 → PPL + LLM 质量评分 → 输出 pretrain / SFT / COT。**
 
 批量读取多格式文档（PDF / Word / HTML / TXT / PNG），经 **解析 / OCR → 清洗去重 → LLM 质量评分**，
