@@ -1,10 +1,32 @@
 """ppl_filter 单元测试
 注意: 不加载真实模型 —— monkeypatch _ppl_of, 只测过滤/标定逻辑。
 (模型加载路径由扫码脚本实测覆盖)
+
+关于 transformers 的打桩方式:
+    transformers / torch 已随本地 OCR 方案一并废弃, 不在 requirements.txt 与
+    pyproject 依赖中。因此涉及 from_pretrained 的用例不能写成
+    mock.patch("transformers.X") —— mock 解析字符串目标时会真实 import 该模块,
+    在干净环境(含 CI)直接 ModuleNotFoundError。
+    改为把假模块注入 sys.modules, 测试意图(缓存根透传 / 失败不静默)不变。
 """
+import sys
+import types
 import unittest
+from unittest import mock
 
 from file_processor.cleaners.ppl_filter import PPLFilter
+
+
+def _fake_transformers(tokenizer_side_effect=None, model_side_effect=None):
+    """构造假 transformers 模块, 供 mock.patch.dict(sys.modules, ...) 注入。"""
+    fake = types.ModuleType("transformers")
+    fake.AutoTokenizer = mock.MagicMock()
+    fake.AutoModelForCausalLM = mock.MagicMock()
+    if tokenizer_side_effect is not None:
+        fake.AutoTokenizer.from_pretrained.side_effect = tokenizer_side_effect
+    if model_side_effect is not None:
+        fake.AutoModelForCausalLM.from_pretrained.side_effect = model_side_effect
+    return fake
 
 
 class TestPPLFilterLogic(unittest.TestCase):
@@ -39,7 +61,6 @@ class TestPPLFilterLogic(unittest.TestCase):
 
     def test_cache_dir_forwarded_to_from_pretrained(self):
         """模型缓存根必须显式透传, 不依赖外部环境变量(否则默认缓存里没模型时静默失败)"""
-        from unittest import mock
         calls = {}
 
         def fake_tok(name, **kw):
@@ -51,9 +72,8 @@ class TestPPLFilterLogic(unittest.TestCase):
             return object()
 
         f = PPLFilter(model_name="Qwen/Qwen2.5-0.5B", cache_dir="D:/model")
-        with mock.patch("transformers.AutoTokenizer.from_pretrained", side_effect=fake_tok), \
-                mock.patch("transformers.AutoModelForCausalLM.from_pretrained",
-                           side_effect=fake_model):
+        fake = _fake_transformers(fake_tok, fake_model)
+        with mock.patch.dict(sys.modules, {"transformers": fake}):
             f._ensure_model()
         self.assertIsNotNone(f._model)
         self.assertEqual(calls["tokenizer"][1].get("cache_dir"), "D:/model")
@@ -61,10 +81,10 @@ class TestPPLFilterLogic(unittest.TestCase):
 
     def test_model_load_failure_raises_with_actionable_hint(self):
         """模型加载失败必须 fail fast 且提示缓存根怎么配, 不得静默降级"""
-        from unittest import mock
         f = PPLFilter(cache_dir="D:/definitely-missing-cache")
-        with mock.patch("transformers.AutoTokenizer.from_pretrained",
-                        side_effect=OSError("couldn't find them in the cached files")):
+        fake = _fake_transformers(
+            tokenizer_side_effect=OSError("couldn't find them in the cached files"))
+        with mock.patch.dict(sys.modules, {"transformers": fake}):
             with self.assertRaises(RuntimeError) as ctx:
                 f._ensure_model()
         msg = str(ctx.exception)
