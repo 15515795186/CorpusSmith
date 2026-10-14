@@ -106,26 +106,8 @@ class JSONLFormatterTest(unittest.TestCase):
         self.assertEqual(resumed.count_lines("pretrain"), 3)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-    def test_cot_ids_are_per_class(self):
-        """COT id 按规范 8.2: cot-{四类名}-{序号}, 且各类分别编号"""
-        f = JSONLFormatter(self.out)
-        f.write_batch("cot", [
-            {"instruction": "对比 A 与 B。", "input": "", "output": "A 更好。",
-             "chain_of_thought": "1. 逐项对比。\n因此结论是: A 更好。", "task_type": "比较"},
-            {"instruction": "解释其原理。", "input": "", "output": "原理是热传导。",
-             "chain_of_thought": "1. 依据材料说明。\n因此结论是: 热传导。", "task_type": "解释"},
-            {"instruction": "对比 C 与 D。", "input": "", "output": "C 更好。",
-             "chain_of_thought": "1. 逐项对比。\n因此结论是: C 更好。", "task_type": "比较"},
-        ])
-        ids = [r["id"] for r in self._rows("cot")]
-        self.assertEqual(ids, ["cot-比较-000001", "cot-解释-000001", "cot-比较-000002"])
-
-
 class SFTFieldEnrichTest(unittest.TestCase):
-    """SFT 输出补 id/language(《数据集介绍.md》3.2): 写入层注入, 不参与去重指纹"""
+    """SFT / COT 输出补 id 与 language(《数据集介绍.md》3.2 / 8.2): 写入层注入, 不参与去重指纹"""
 
     def setUp(self):
         self._tmp = workspace_tempdir()
@@ -195,3 +177,21 @@ class SFTFieldEnrichTest(unittest.TestCase):
         resumed.write_batch("instruction", [self._sft("问题二？", "答案二。")])
         self.assertEqual([r["id"] for r in self._rows("instruction")],
                          ["sft-000001", "sft-000002"])
+
+    def test_cot_ids_are_per_class(self):
+        """COT id 按规范 8.2: cot-{四类名}-{序号}, 且各类分别编号"""
+        f = JSONLFormatter(self.out)
+        f.write_batch("cot", [
+            {"instruction": "对比 A 与 B。", "input": "", "output": "A 更好。",
+             "chain_of_thought": "1. 逐项对比。\n因此结论是: A 更好。", "task_type": "比较"},
+            {"instruction": "解释其原理。", "input": "", "output": "原理是热传导。",
+             "chain_of_thought": "1. 依据材料说明。\n因此结论是: 热传导。", "task_type": "解释"},
+            {"instruction": "对比 C 与 D。", "input": "", "output": "C 更好。",
+             "chain_of_thought": "1. 逐项对比。\n因此结论是: C 更好。", "task_type": "比较"},
+        ])
+        ids = [r["id"] for r in self._rows("cot")]
+        self.assertEqual(ids, ["cot-比较-000001", "cot-解释-000001", "cot-比较-000002"])
+
+
+if __name__ == "__main__":
+    unittest.main()

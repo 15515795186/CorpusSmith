@@ -158,7 +158,7 @@ python verify_datasets.py
 python -m unittest discover -s tests -v
 ```
 
-上述测试套件本地实跑为 215 个用例，全部通过。
+上述测试套件本地实跑为 216 个用例，全部通过。
 
 ---
 

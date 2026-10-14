@@ -23,7 +23,7 @@ datasets: pretraining (`pretrain`), instruction tuning (`instruction`, SFT), and
 | Diagnosable | Rejected text is written to `rejected.jsonl` with a reason histogram, making threshold and OCR-quality issues traceable |
 | Deterministic reports | Each run emits `run_report.json` (file counts, cache hits, rejection reasons, dataset sizes, redacted config) |
 | Credential safety | Project-root `.env` is auto-loaded (gitignored); real environment variables take precedence; keys never reach code, repo, or registry |
-| Dependency-free testing | 215+ unit and end-to-end tests (stdlib `unittest`), no API key required |
+| Dependency-free testing | 216 unit and end-to-end tests (stdlib `unittest`), no API key required |
 
 ---
 
