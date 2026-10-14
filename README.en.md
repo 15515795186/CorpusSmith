@@ -1,8 +1,8 @@
 # CorpusSmith
 
-[![CI](https://github.com/15515795186/CorpusSmith/actions/workflows/ci.yml/badge.svg)](https://github.com/15515795186/CorpusSmith/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/15515795186/CorpusSmith)](https://github.com/15515795186/CorpusSmith/releases/latest)
-[![License](https://img.shields.io/github/license/15515795186/CorpusSmith)](https://github.com/15515795186/CorpusSmith/blob/main/LICENSE)
+[![CI](https://github.com/Qmmep/CorpusSmith/actions/workflows/ci.yml/badge.svg)](https://github.com/Qmmep/CorpusSmith/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Qmmep/CorpusSmith)](https://github.com/Qmmep/CorpusSmith/releases/latest)
+[![License](https://img.shields.io/github/license/Qmmep/CorpusSmith)](https://github.com/Qmmep/CorpusSmith/blob/main/LICENSE)
 
 **Forge multi-format documents into LLM training datasets: parse / OCR → clean & dedup → PPL + LLM quality scoring → emit pretrain / SFT / COT.**
 
